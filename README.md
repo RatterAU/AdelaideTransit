@@ -15,6 +15,14 @@ Live map · real-time departures · walk timing · service alerts — no account
 
 </div>
 
+<div align="center">
+
+<img src="docs/screenshots/favourites.png" width="270" alt="Favourites — starred stops grouped and sorted nearest first, each showing the next three departures with live status dots"> <img src="docs/screenshots/map.png" width="270" alt="Live map — every vehicle on the network with route colours and bearings, feed age badge, favourite stops as gold pins"> <img src="docs/screenshots/alerts.png" width="270" alt="Alerts — service alerts filtered by mode, split by whether they affect your starred routes and stops">
+
+<sub>**Favourites** · **Live map** · **Alerts** — real screens, real Adelaide Metro data</sub>
+
+</div>
+
 ---
 
 ## What it is
@@ -46,7 +54,7 @@ It is deliberately small: one target, no accounts, no server, no third-party ana
 
 ```bash
 # 1. Clone
-git clone https://github.com/<your-username>/adelaide-transit.git
+git clone https://github.com/RatterAU/adelaide-transit.git
 cd adelaide-transit/AdelaideTransit
 
 # 2. Install the project generator (once)
