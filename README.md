@@ -17,7 +17,7 @@ Live map · real-time departures · walk timing · service alerts — no account
 
 <div align="center">
 
-<img src="docs/screenshots/favourites.png" width="270" alt="Favourites — starred stops grouped and sorted nearest first, each showing the next three departures with live status dots"> <img src="docs/screenshots/map.png" width="270" alt="Live map — every vehicle on the network with route colours and bearings, feed age badge, favourite stops as gold pins"> <img src="docs/screenshots/alerts.png" width="270" alt="Alerts — service alerts filtered by mode, split by whether they affect your starred routes and stops">
+<img src="docs/screenshots/favourites.png" width="270" alt="Favourites — starred stops grouped and sorted nearest first, each showing the next three departures with live status dots"> <img src="docs/screenshots/map.png" width="270" alt="Live map — every vehicle on the network with route colours and bearings, feed age badge, favourite stops as gold pins"> <img src="docs/screenshots/alerts.png" width="270" alt="Alerts — service alerts with an All/Bus/Tram/Train mode filter, each row showing title and how long it has been in effect">
 
 <sub>**Favourites** · **Live map** · **Alerts** — real screens, real Adelaide Metro data</sub>
 
