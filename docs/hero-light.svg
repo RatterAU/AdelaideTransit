@@ -1,60 +1,83 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-label="Adelaide Transit — do I need to leave now?">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="340" viewBox="0 0 1200 340" role="img" aria-label="Adelaide Transit — do I need to leave now? GTFS, real-time, offline-first, SwiftUI">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#FBFBFD"/>
-      <stop offset="1" stop-color="#EFF1F6"/>
+      <stop offset="0" stop-color="#FCFCFE"/>
+      <stop offset="1" stop-color="#EDF0F6"/>
     </linearGradient>
-    <linearGradient id="fade" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#E08C00" stop-opacity="0"/>
-      <stop offset="0.35" stop-color="#E08C00" stop-opacity="1"/>
-      <stop offset="1" stop-color="#E08C00" stop-opacity="1"/>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.75"/>
     </linearGradient>
-    <clipPath id="card"><rect width="1200" height="300" rx="18"/></clipPath>
+    <linearGradient id="rule" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#E08C00"/>
+      <stop offset="1" stop-color="#E08C00" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="frame"><rect width="1200" height="340" rx="20"/></clipPath>
   </defs>
 
-  <g clip-path="url(#card)">
-    <rect width="1200" height="300" fill="url(#bg)"/>
+  <g clip-path="url(#frame)">
+    <rect width="1200" height="340" fill="url(#bg)"/>
 
-    <!-- map grid -->
-    <g stroke="#0B1B33" stroke-opacity="0.055" stroke-width="1">
-      <path d="M0 60H1200M0 120H1200M0 180H1200M0 240H1200"/>
-      <path d="M80 0V300M240 0V300M400 0V300M560 0V300M720 0V300M880 0V300M1040 0V300"/>
+    <!-- map substrate -->
+    <g stroke="#0B1B33" stroke-opacity="0.05" stroke-width="1">
+      <path d="M0 68H1200M0 136H1200M0 204H1200M0 272H1200"/>
+      <path d="M96 0V340M232 0V340M368 0V340M504 0V340M640 0V340M776 0V340M912 0V340M1048 0V340"/>
     </g>
-    <g stroke="#0B1B33" stroke-opacity="0.09" stroke-width="1.5" fill="none">
-      <path d="M-20 214C120 214 180 150 300 150S470 96 560 96 780 40 900 40s260 0 340 0"/>
-      <path d="M-20 268C160 268 300 246 420 246s180 34 300 34 300-22 520-22"/>
+    <g stroke="#0B1B33" stroke-opacity="0.08" stroke-width="1.5" fill="none">
+      <path d="M-20 244C140 244 200 176 330 176s180-64 280-64 250-52 380-52 260 8 260 8"/>
+      <path d="M-20 306C170 306 320 282 450 282s190 36 320 36 300-24 470-24"/>
     </g>
 
-    <!-- route line -->
+    <!-- vehicle trail -->
     <g fill="none" stroke-linecap="round">
-      <path d="M700 196C760 196 792 132 862 132s96 40 150 40 108-28 168-28" stroke="url(#fade)" stroke-width="5"/>
+      <path d="M74 292C190 292 250 262 356 262s150 18 240 18" stroke="#E08C00" stroke-opacity="0.35" stroke-width="4"/>
     </g>
-    <g fill="#FFFFFF" stroke="#E08C00" stroke-width="4">
-      <circle cx="700" cy="196" r="9"/>
-      <circle cx="862" cy="132" r="9"/>
-      <circle cx="1012" cy="172" r="9"/>
-    </g>
-    <circle cx="1180" cy="144" r="10" fill="#E08C00"/>
-
-    <!-- route badges -->
-    <g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="19" font-weight="700" text-anchor="middle">
-      <rect x="700" y="222" width="74" height="34" rx="17" fill="#1B3A6B"/>
-      <text x="737" y="245" fill="#FFFFFF">H33C</text>
-      <rect x="786" y="222" width="62" height="34" rx="17" fill="#F5A623"/>
-      <text x="817" y="245" fill="#1A1206">J1A</text>
-      <rect x="860" y="222" width="66" height="34" rx="17" fill="#8E1B2E"/>
-      <text x="893" y="245" fill="#FFFFFF">G20</text>
-      <rect x="938" y="222" width="66" height="34" rx="17" fill="#1F7A4D"/>
-      <text x="971" y="245" fill="#FFFFFF">801</text>
-    </g>
+    <circle cx="74" cy="292" r="6" fill="#FCFCFE" stroke="#E08C00" stroke-opacity="0.55" stroke-width="3"/>
+    <circle cx="356" cy="262" r="6" fill="#FCFCFE" stroke="#E08C00" stroke-opacity="0.55" stroke-width="3"/>
+    <circle cx="596" cy="280" r="7" fill="#E08C00" fill-opacity="0.9"/>
 
     <!-- wordmark -->
     <g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
-      <text x="72" y="128" font-size="62" font-weight="800" letter-spacing="-1.6" fill="#0B1B33">Adelaide Transit</text>
-      <text x="74" y="176" font-size="26" font-weight="500" fill="#5A6577">Do I need to leave now?</text>
-      <text x="75" y="232" font-size="15" font-weight="600" letter-spacing="2.4" fill="#B36F00">GTFS &#183; REAL-TIME &#183; OFFLINE-FIRST &#183; SWIFTUI</text>
+      <text x="72" y="126" font-size="64" font-weight="800" letter-spacing="-1.8" fill="#0B1B33">Adelaide Transit</text>
+      <rect x="75" y="146" width="132" height="3" rx="1.5" fill="url(#rule)"/>
+      <text x="74" y="192" font-size="26" font-weight="500" fill="#5A6577">Do I need to leave now?</text>
+      <text x="75" y="234" font-size="14" font-weight="600" letter-spacing="2.6" fill="#B36F00">GTFS &#183; REAL-TIME &#183; OFFLINE-FIRST &#183; SWIFTUI</text>
     </g>
 
-    <rect x="0.5" y="0.5" width="1199" height="299" rx="18" fill="none" stroke="#0B1B33" stroke-opacity="0.10"/>
+    <!-- departure card -->
+    <g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+      <rect x="700" y="62" width="440" height="216" rx="22" fill="url(#card)" stroke="#0B1B33" stroke-opacity="0.10"/>
+
+      <text x="728" y="100" font-size="17" font-weight="700" fill="#0B1B33">Currie St &#8212; city</text>
+      <circle cx="1064" cy="94" r="4" fill="#1F9D57"/>
+      <text x="1078" y="100" font-size="13" font-weight="600" fill="#1F9D57">LIVE</text>
+
+      <line x1="728" y1="118" x2="1112" y2="118" stroke="#0B1B33" stroke-opacity="0.10"/>
+
+      <!-- row 1 -->
+      <rect x="728" y="134" width="76" height="32" rx="16" fill="#1B3A6B"/>
+      <text x="766" y="156" font-size="17" font-weight="700" fill="#FFFFFF" text-anchor="middle">H33C</text>
+      <text x="818" y="156" font-size="16" font-weight="500" fill="#5A6577">City &#8212; West Beach</text>
+      <text x="1112" y="150" font-size="19" font-weight="700" fill="#0B1B33" text-anchor="end">3 min</text>
+      <text x="1112" y="169" font-size="13" font-weight="500" fill="#8A93A3" text-anchor="end">10:42</text>
+
+      <line x1="728" y1="186" x2="1112" y2="186" stroke="#0B1B33" stroke-opacity="0.07"/>
+
+      <!-- row 2 -->
+      <rect x="728" y="202" width="64" height="32" rx="16" fill="#F5A623"/>
+      <text x="760" y="224" font-size="17" font-weight="700" fill="#1A1206" text-anchor="middle">J1A</text>
+      <text x="806" y="224" font-size="16" font-weight="500" fill="#5A6577">Elizabeth Interchange</text>
+      <text x="1112" y="218" font-size="19" font-weight="700" fill="#0B1B33" text-anchor="end">9 min</text>
+      <text x="1112" y="237" font-size="13" font-weight="500" fill="#8A93A3" text-anchor="end">10:48</text>
+    </g>
+
+    <!-- feed age chip -->
+    <g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+      <rect x="700" y="292" width="126" height="30" rx="15" fill="#FFFFFF" fill-opacity="0.9" stroke="#0B1B33" stroke-opacity="0.10"/>
+      <circle cx="720" cy="307" r="4.5" fill="#1F9D57"/>
+      <text x="734" y="312" font-size="14" font-weight="600" fill="#5A6577">14s old</text>
+    </g>
+
+    <rect x="0.5" y="0.5" width="1199" height="339" rx="20" fill="none" stroke="#0B1B33" stroke-opacity="0.10"/>
   </g>
 </svg>

@@ -6,9 +6,9 @@
   <img src="docs/hero-light.svg" alt="Adelaide Transit — do I need to leave now? GTFS, real-time, offline-first, SwiftUI" width="100%">
 </picture>
 
-<br>
+<br><br>
 
-**A native iOS transit app for Adelaide Metro that answers one question fast: _do I need to leave now?_**
+**A native iOS app for Adelaide Metro that answers one question fast: _do I need to leave now?_**
 
 Live map · real-time departures · walk timing · service alerts<br>
 No accounts. No analytics. No backend. No API keys.
@@ -21,6 +21,19 @@ No accounts. No analytics. No backend. No API keys.
 ![Warnings](https://img.shields.io/badge/warnings-0-1F7A4D?style=for-the-badge)
 ![Tests](https://img.shields.io/badge/tests-65_passing-1F7A4D?style=for-the-badge)
 ![Licence](https://img.shields.io/badge/licence-MIT-8E1B2E?style=for-the-badge)
+
+<br>
+
+<table>
+<tr>
+<td align="center"><sub>STOPS</sub><br><b>9,171</b></td>
+<td align="center"><sub>TRIPS</sub><br><b>31,379</b></td>
+<td align="center"><sub>FEED CADENCE</sub><br><b>15 s</b></td>
+<td align="center"><sub>MAP FRAME COST</sub><br><b>&lt; 2.2 ms</b></td>
+<td align="center"><sub>SERVERS</sub><br><b>0</b></td>
+<td align="center"><sub>TO BROWSE OFFLINE</sub><br><b>0 bytes</b></td>
+</tr>
+</table>
 
 </div>
 
@@ -41,25 +54,15 @@ No accounts. No analytics. No backend. No API keys.
 </tr>
 </table>
 
-<sub>Real screens. Real Adelaide Metro data. No mockups.</sub>
+<sub>Real screens · real Adelaide Metro data · no mockups</sub>
+
+<br><br>
+
+[**What it is**](#what-it-is) &nbsp;·&nbsp; [**Features**](#features) &nbsp;·&nbsp; [**Install**](#install) &nbsp;·&nbsp; [**How it works**](#how-it-works) &nbsp;·&nbsp; [**What the feed doesn't document**](#what-the-feed-doesnt-document) &nbsp;·&nbsp; [**Performance**](#performance) &nbsp;·&nbsp; [**Privacy**](#privacy)
 
 </div>
 
 ---
-
-<div align="center">
-
-| Stops | Trips | Feed cadence | Backend | Accounts | Network to browse |
-|:--:|:--:|:--:|:--:|:--:|:--:|
-| **9,171** | **31,379** | **15 s** | **none** | **none** | **0 bytes** |
-
-</div>
-
----
-
-## Contents
-
-[What it is](#what-it-is) · [Features](#features) · [Install](#install) · [Architecture](#architecture) · [What the feed doesn't document](#what-the-feed-doesnt-document) · [Performance](#performance) · [Privacy](#privacy) · [Licence](#data--licence)
 
 ## What it is
 
@@ -70,14 +73,70 @@ It is deliberately small: one target, no accounts, no server, no third-party ana
 ## Features
 
 <table>
-<tr><td width="26%">🗺️<br><b>Live map</b></td><td>Every bus, tram and train on the network, culled to your viewport and eased between GPS pings. Stops thin intelligently as you zoom — the <i>most important</i> stop per grid cell, never a cluster bubble that re-partitions on every pan.</td></tr>
-<tr><td>⏱️<br><b>Departures that tell the truth</b></td><td>Every row carries a countdown <b>and</b> a clock time — "do I move" and "which service is this" are different questions. Live, scheduled, stale, ghost and cancelled are five distinct states, never conflated.</td></tr>
-<tr><td>🚶<br><b>Walk timing</b></td><td>Routed walking time via MapKit for the stop you're looking at, with an honest warning when you won't make it — and silence when the walk was never plausible.</td></tr>
-<tr><td>🔁<br><b>Block continuation</b></td><td>Answers a question no other app asks: <i>does this bus carry on under a different route number?</i> 14,895 of 31,379 trips do. Matched by position, not stop ID, because an interchange is many stops.</td></tr>
-<tr><td>⭐<br><b>Favourites first</b></td><td>Opens on your starred stops, nearest first, re-sorted live as your location updates. Closure and detour alerts surface on the stop row itself.</td></tr>
-<tr><td>🔔<br><b>Alerts that stop nagging</b></td><td>The tab badge counts <i>unseen</i> alerts, not active ones — so a fortnight of roadworks doesn't pin a permanent red dot to your tab bar.</td></tr>
-<tr><td>👻<br><b>Ghost trips</b></td><td>Services the real-time feed isn't tracking still appear, interpolated along the route shape and drawn faintly, so an untracked bus isn't an invisible one.</td></tr>
-<tr><td>📴<br><b>Offline by default</b></td><td>Timetable browsing costs zero network. The feed is re-downloaded only when the server's <code>ETag</code> actually changes.</td></tr>
+<tr>
+<td width="50%" valign="top">
+
+### 🗺️ Live map
+
+Every bus, tram and train on the network, culled to your viewport and eased between GPS pings. Stops thin as you zoom — the *most important* stop per grid cell, never a cluster bubble that re-partitions on every pan.
+
+</td>
+<td width="50%" valign="top">
+
+### ⏱️ Departures that tell the truth
+
+Every row carries a countdown **and** a clock time — "do I move" and "which service is this" are different questions. Live, scheduled, stale, ghost and cancelled stay five distinct states.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 🚶 Walk timing
+
+Routed walking time via MapKit for the stop you're looking at, with an honest warning when you won't make it — and silence when the walk was never plausible.
+
+</td>
+<td valign="top">
+
+### 🔁 Block continuation
+
+A question no other app asks: *does this bus carry on under a different route number?* 14,895 of 31,379 trips do. Matched by position, not stop ID, because an interchange is many stops.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### ⭐ Favourites first
+
+Opens on your starred stops, nearest first, re-sorted live as your location updates. Closure and detour alerts surface on the stop row itself.
+
+</td>
+<td valign="top">
+
+### 🔔 Alerts that stop nagging
+
+The tab badge counts *unseen* alerts, not active ones — so a fortnight of roadworks doesn't pin a permanent red dot to your tab bar.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 👻 Ghost trips
+
+Services the real-time feed isn't tracking still appear, interpolated along the route shape and drawn faintly, so an untracked bus isn't an invisible one.
+
+</td>
+<td valign="top">
+
+### 📴 Offline by default
+
+Timetable browsing costs zero network. The feed is re-downloaded only when the server's `ETag` actually changes.
+
+</td>
+</tr>
 </table>
 
 ## Install
@@ -124,7 +183,39 @@ xcodebuild -project AdelaideTransit.xcodeproj -scheme AdelaideTransit \
 
 </details>
 
-## Architecture
+## How it works
+
+Two data paths, one junction. Schedule comes from a daily ZIP; truth about *today* comes from three protobuf feeds. They meet in exactly one place.
+
+```mermaid
+flowchart LR
+    ZIP["GTFS static ZIP<br/><i>~30 MB, daily</i>"] -->|ETag-gated| ING[Ingest]
+    ING -->|staged, validated, swapped| NET[("network.sqlite<br/><i>disposable cache</i>")]
+    USR[("user.sqlite<br/><i>favourites only</i>")] --> STORE
+    NET --> STORE(["GTFSStore<br/><i>actor · only SQL surface</i>"])
+
+    TU["trip_updates<br/><i>242 KB</i>"] --> ENG
+    VP["vehicle_positions<br/><i>45 KB</i>"] --> ENG
+    AL["alerts<br/><i>61 KB</i>"] --> ENG["RealtimeEngine<br/><i>phase-locked poller</i>"]
+
+    STORE --> MERGE{{"Merge<br/><i>pure · tested</i>"}}
+    ENG --> MERGE
+    MERGE --> UI["Map · Stop · Trip<br/>Favourites · Alerts"]
+```
+
+Four rules hold the thing together:
+
+|  | Rule | Why |
+|:--|:--|:--|
+| **1** | **`Merge` is the only place schedule and real-time combine** | Delays, cancellations, tracking state, service-day arithmetic and ghost interpolation are one pure, tested unit — never scattered into a view |
+| **2** | **`GTFSStore` (an actor) is the only database surface** | No SQL anywhere else in the app, so query cost and cache invalidation live in one file |
+| **3** | **Two database files, and the split is load-bearing** | `network.sqlite` is replaced wholesale by ingest; `user.sqlite` is untouched by it. They were one file once, and a routine timetable update deleted every starred stop |
+| **4** | **The staged feed is validated before the swap** | The old database is moved aside rather than deleted — a truncated download is still perfectly valid SQLite |
+
+<details>
+<summary><b>Source layout</b></summary>
+
+<br>
 
 ```
 App/          App entry, tab router, theme + shared formatting rules
@@ -140,32 +231,31 @@ Features/
 Tests/        Swift Testing — merge logic, poll schedule, formatting, HTML
 ```
 
-Four rules hold the thing together:
-
-- **`Merge` is the only place schedule and real-time combine.** Delays, cancellations, tracking state, service-day arithmetic, ghost interpolation — all pure, all tested, never in a view.
-- **`GTFSStore` (an actor) is the only database surface.** No SQL anywhere else.
-- **Two database files, and the split is load-bearing.** `network.sqlite` is a disposable feed cache that ingest replaces wholesale. `user.sqlite` holds your favourites and nothing else touches it. They were one file once, and a routine timetable update deleted every starred stop.
-- **A staged feed is validated before the swap**, and the old database is moved aside rather than deleted — a truncated download is still valid SQLite.
+</details>
 
 ## What the feed doesn't document
 
-Most of this app's design comes from measuring the real feeds rather than trusting the spec:
+Most of this app's design comes from measuring the real feeds rather than trusting the spec.
 
-- **The real-time feeds publish every 15 seconds** and the payload is fetchable about 5 seconds after the timestamp it carries. Polling faster returns byte-identical data — so *cadence is the only lever on freshness*, and the scheduler is phase-locked to the source clock rather than ticking on a fixed interval from launch.
-- **No `ETag`, no `Last-Modified`, no `Cache-Control`** on real-time, and `Accept-Encoding: gzip` is ignored — every poll is full and uncompressed (trip updates 242 KB, alerts 61 KB, vehicles 45 KB). That's why trip updates only pre-warm on unconstrained Wi-Fi.
-- **Nothing carries `current_stop_sequence`** (0 of 627 entities). So "where is the bus" is derived instead from the *pruning boundary*: a stop's update disappears once the bus passes it, making the smallest published stop sequence the vehicle's position. Verified stable for 790 of 792 trips over five minutes.
-- **Trip updates carry absolute arrival times, never a delay field** (14,098 of 14,098). A stop with no update of its own is *interpolated* between the nearest known delays either side — which is what lets a recovering bus track from 6 minutes down to 3 instead of freezing at the stale figure.
-- **Vehicle positions have no occupancy data**, so there's no crowding UI — rather than a fabricated one.
-- **All 9,171 stop IDs are numeric**, which matters because the SQLite R-tree spatial index keys on `INTEGER`.
+| Measured | What the app does about it |
+|:--|:--|
+| **Publishes every 15 s**, readable ~5 s after its own timestamp. Polling faster returns byte-identical data | Cadence is the only lever on freshness, so the scheduler is **phase-locked to the source clock** rather than ticking on a fixed interval from launch |
+| **No `ETag`, no `Last-Modified`, no `Cache-Control`** on real-time, and `Accept-Encoding: gzip` is ignored — every poll is full and uncompressed | Trip updates pre-warm **only on unconstrained Wi-Fi**, never on cellular or Low Data |
+| **Nothing carries `current_stop_sequence`** — 0 of 627 entities | "Where is the bus" is derived from the **pruning boundary**: a stop's update disappears once passed, so the smallest published sequence *is* the vehicle. Stable for 790 of 792 trips over five minutes |
+| **Absolute arrival times, never a delay field** — 14,098 of 14,098 | A stop with no update of its own is **interpolated** between the nearest known delays either side — which is what lets a recovering bus track 6 min → 3 instead of freezing on the stale figure |
+| **No occupancy data** on vehicle positions | There is **no crowding UI**, rather than a fabricated one |
+| **All 9,171 stop IDs are numeric** | The SQLite R-tree spatial index keys on `INTEGER` — one non-numeric ID would silently drop a stop from every map query |
 
 ## Performance
 
-Every number here was measured, not assumed:
+Every number here was measured, not assumed.
 
-- **~235 map annotations at peak, under 2.2 ms** to resolve, at 9,171 stops. Stops are thinned at query time by an absolute-anchored grid — clustering was rejected because it re-partitions on every region change, turning a pan into endless merge/split churn.
-- **Nothing in the map's `updateUIView` runs unconditionally.** It fires on every render, frame and pan tick, so configuration, polylines and annotations are all change-gated.
-- **Departure queries bound their scan in SQL.** The naive version read an entire service day for a stop served by 62 routes and threw most of it away.
-- **Search is debounced and cancellable** (`.task(id:)`, 250 ms) — the substring scan is unindexed across all 9,171 stops, and un-ordered replies once left the wrong list on screen.
+| Number | The decision behind it |
+|:--|:--|
+| **~235 annotations at peak, < 2.2 ms** to resolve, at 9,171 stops | Stops are thinned at query time by an absolute-anchored grid. Clustering was **rejected** — it re-partitions on every region change, turning a pan into endless merge/split churn |
+| **Zero unconditional work** in the map's `updateUIView` | It fires on every render, frame and pan tick, so configuration, polylines and annotations are all change-gated |
+| **One bounded range scan** per departures query | The naive version read an entire service day for a stop served by 62 routes and threw most of it away |
+| **250 ms debounce**, cancellable (`.task(id:)`) on search | The substring scan is unindexed across all 9,171 stops, and un-ordered replies once left the wrong list on screen |
 
 ## Privacy
 
@@ -178,5 +268,6 @@ Timetable and real-time data © Department for Infrastructure and Transport, Sou
 Code is released under the [MIT Licence](LICENSE).
 
 <div align="center">
+<br>
 <sub>Built in Adelaide 🇦🇺</sub>
 </div>
