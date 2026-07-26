@@ -1,29 +1,65 @@
 <div align="center">
 
-# Adelaide Transit
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/hero-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/hero-light.svg">
+  <img src="docs/hero-light.svg" alt="Adelaide Transit — do I need to leave now? GTFS, real-time, offline-first, SwiftUI" width="100%">
+</picture>
+
+<br>
 
 **A native iOS transit app for Adelaide Metro that answers one question fast: _do I need to leave now?_**
 
-Live map · real-time departures · walk timing · service alerts — no accounts, no analytics, no backend, no API keys.
+Live map · real-time departures · walk timing · service alerts<br>
+No accounts. No analytics. No backend. No API keys.
 
-![Platform](https://img.shields.io/badge/platform-iOS%2026-black?style=flat-square&logo=apple)
-![Swift](https://img.shields.io/badge/Swift-6.2-F05138?style=flat-square&logo=swift&logoColor=white)
-![Concurrency](https://img.shields.io/badge/strict%20concurrency-enabled-4B8BBE?style=flat-square)
-![Warnings](https://img.shields.io/badge/warnings-0-success?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-65%20passing-success?style=flat-square)
-![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)
+<br>
+
+![Platform](https://img.shields.io/badge/iOS-26-0B1B33?style=for-the-badge&logo=apple&logoColor=white)
+![Swift](https://img.shields.io/badge/Swift-6.2-F05138?style=for-the-badge&logo=swift&logoColor=white)
+![Strict concurrency](https://img.shields.io/badge/strict_concurrency-on-1B3A6B?style=for-the-badge)
+![Warnings](https://img.shields.io/badge/warnings-0-1F7A4D?style=for-the-badge)
+![Tests](https://img.shields.io/badge/tests-65_passing-1F7A4D?style=for-the-badge)
+![Licence](https://img.shields.io/badge/licence-MIT-8E1B2E?style=for-the-badge)
 
 </div>
 
+<br>
+
 <div align="center">
 
-<img src="docs/screenshots/favourites.png" width="270" alt="Favourites — starred stops grouped and sorted nearest first, each showing the next three departures with live status dots"> <img src="docs/screenshots/map.png" width="270" alt="Live map — every vehicle on the network with route colours and bearings, feed age badge, favourite stops as gold pins"> <img src="docs/screenshots/alerts.png" width="270" alt="Alerts — service alerts with an All/Bus/Tram/Train mode filter, each row showing title and how long it has been in effect">
+<table>
+<tr>
+<td align="center" width="33%"><img src="docs/screenshots/favourites.png" width="250" alt="Favourites — starred stops grouped and sorted nearest first, each showing the next three departures with live status dots"></td>
+<td align="center" width="33%"><img src="docs/screenshots/map.png" width="250" alt="Live map — every vehicle on the network with route colours and bearings, feed age badge, favourite stops as gold pins"></td>
+<td align="center" width="33%"><img src="docs/screenshots/alerts.png" width="250" alt="Alerts — service alerts with an All/Bus/Tram/Train mode filter, each row showing title and how long it has been in effect"></td>
+</tr>
+<tr>
+<td align="center"><b>Favourites</b><br><sub>Nearest first, re-sorted live</sub></td>
+<td align="center"><b>Live map</b><br><sub>Every vehicle, feed age on screen</sub></td>
+<td align="center"><b>Alerts</b><br><sub>Filtered by mode, badged by unseen</sub></td>
+</tr>
+</table>
 
-<sub>**Favourites** · **Live map** · **Alerts** — real screens, real Adelaide Metro data</sub>
+<sub>Real screens. Real Adelaide Metro data. No mockups.</sub>
 
 </div>
 
 ---
+
+<div align="center">
+
+| Stops | Trips | Feed cadence | Backend | Accounts | Network to browse |
+|:--:|:--:|:--:|:--:|:--:|:--:|
+| **9,171** | **31,379** | **15 s** | **none** | **none** | **0 bytes** |
+
+</div>
+
+---
+
+## Contents
+
+[What it is](#what-it-is) · [Features](#features) · [Install](#install) · [Architecture](#architecture) · [What the feed doesn't document](#what-the-feed-doesnt-document) · [Performance](#performance) · [Privacy](#privacy) · [Licence](#data--licence)
 
 ## What it is
 
@@ -33,37 +69,27 @@ It is deliberately small: one target, no accounts, no server, no third-party ana
 
 ## Features
 
-| | |
-|---|---|
-| 🗺️ **Live map** | Every bus, tram and train on the network, culled to your viewport and eased between GPS pings. Stops thin intelligently as you zoom — the *most important* stop per grid cell, never a cluster bubble that re-partitions on every pan. |
-| ⏱️ **Departures that tell the truth** | Every row carries a countdown **and** a clock time — "do I move" and "which service is this" are different questions. Live, scheduled, stale, ghost and cancelled are five distinct states, never conflated. |
-| 🚶 **Walk timing** | Routed walking time via MapKit for the stop you're looking at, with an honest warning when you won't make it — and silence when the walk was never plausible. |
-| 🔁 **Block continuation** | Answers a question no other app asks: *does this bus carry on under a different route number?* 14,895 of 31,379 trips do. Matched by position, not stop ID, because an interchange is many stops. |
-| ⭐ **Favourites first** | Opens on your starred stops, nearest first, re-sorted live as your location updates. Closure and detour alerts surface on the stop row itself. |
-| 🔔 **Alerts that stop nagging** | The tab badge counts *unseen* alerts, not active ones — so a fortnight of roadworks doesn't pin a permanent red dot to your tab bar. |
-| 👻 **Ghost trips** | Services the real-time feed isn't tracking still appear, interpolated along the route shape and drawn faintly, so an untracked bus isn't an invisible one. |
-| 📴 **Offline by default** | Timetable browsing costs zero network. The feed is re-downloaded only when the server's `ETag` actually changes. |
-
-## Requirements
-
-- **macOS** with **Xcode 26** or later (iOS 26 SDK)
-- **iOS 26** device or simulator
-- [**XcodeGen**](https://github.com/yonaskolb/XcodeGen) — the `.xcodeproj` is generated, not committed
+<table>
+<tr><td width="26%">🗺️<br><b>Live map</b></td><td>Every bus, tram and train on the network, culled to your viewport and eased between GPS pings. Stops thin intelligently as you zoom — the <i>most important</i> stop per grid cell, never a cluster bubble that re-partitions on every pan.</td></tr>
+<tr><td>⏱️<br><b>Departures that tell the truth</b></td><td>Every row carries a countdown <b>and</b> a clock time — "do I move" and "which service is this" are different questions. Live, scheduled, stale, ghost and cancelled are five distinct states, never conflated.</td></tr>
+<tr><td>🚶<br><b>Walk timing</b></td><td>Routed walking time via MapKit for the stop you're looking at, with an honest warning when you won't make it — and silence when the walk was never plausible.</td></tr>
+<tr><td>🔁<br><b>Block continuation</b></td><td>Answers a question no other app asks: <i>does this bus carry on under a different route number?</i> 14,895 of 31,379 trips do. Matched by position, not stop ID, because an interchange is many stops.</td></tr>
+<tr><td>⭐<br><b>Favourites first</b></td><td>Opens on your starred stops, nearest first, re-sorted live as your location updates. Closure and detour alerts surface on the stop row itself.</td></tr>
+<tr><td>🔔<br><b>Alerts that stop nagging</b></td><td>The tab badge counts <i>unseen</i> alerts, not active ones — so a fortnight of roadworks doesn't pin a permanent red dot to your tab bar.</td></tr>
+<tr><td>👻<br><b>Ghost trips</b></td><td>Services the real-time feed isn't tracking still appear, interpolated along the route shape and drawn faintly, so an untracked bus isn't an invisible one.</td></tr>
+<tr><td>📴<br><b>Offline by default</b></td><td>Timetable browsing costs zero network. The feed is re-downloaded only when the server's <code>ETag</code> actually changes.</td></tr>
+</table>
 
 ## Install
 
+**Requirements** — macOS with **Xcode 26**+ (iOS 26 SDK) · an **iOS 26** device or simulator · [**XcodeGen**](https://github.com/yonaskolb/XcodeGen), because the `.xcodeproj` is generated, not committed.
+
 ```bash
-# 1. Clone
-git clone https://github.com/RatterAU/adelaide-transit.git
-cd adelaide-transit/AdelaideTransit
+git clone https://github.com/RatterAU/AdelaideTransit.git
+cd AdelaideTransit/AdelaideTransit
 
-# 2. Install the project generator (once)
-brew install xcodegen
-
-# 3. Generate the Xcode project from project.yml
-xcodegen generate
-
-# 4. Open it
+brew install xcodegen     # once
+xcodegen generate         # build the .xcodeproj from project.yml
 open AdelaideTransit.xcodeproj
 ```
 
@@ -74,11 +100,16 @@ Then in Xcode:
 3. Change the **Bundle Identifier** to something unique to you (e.g. `com.yourname.adelaidetransit`) — bundle IDs are global, and the default won't be available to you.
 4. Pick your iPhone or a simulator and hit **Run**.
 
-> **First launch downloads the full timetable (~30 MB) and ingests it into SQLite.** Give it a minute on Wi-Fi. After that, everything except live vehicle positions works with the network off.
+> [!NOTE]
+> **First launch downloads the full timetable (~30 MB)** and ingests it into SQLite. Give it a minute on Wi-Fi. After that, everything except live vehicle positions works with the network off.
 
-> **Free Apple accounts** re-sign apps every 7 days — the app will stop launching until you rebuild. A paid Developer Program account raises that to a year. Nothing in this app requires paid capabilities.
+> [!TIP]
+> **Free Apple accounts re-sign apps every 7 days** — the app stops launching until you rebuild. A paid Developer Program account raises that to a year. Nothing here requires paid capabilities.
 
-### Building from the command line
+<details>
+<summary><b>Building and testing from the command line</b></summary>
+
+<br>
 
 ```bash
 xcodebuild -project AdelaideTransit.xcodeproj -scheme AdelaideTransit \
@@ -88,7 +119,10 @@ xcodebuild -project AdelaideTransit.xcodeproj -scheme AdelaideTransit \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
 ```
 
+> [!WARNING]
 > **Never hand-edit the `.xcodeproj`.** `project.yml` is the source of truth; run `xcodegen generate` after adding any file. If Xcode offers "recommended settings", decline — those belong in `project.yml`, or the prompt returns forever.
+
+</details>
 
 ## Architecture
 
@@ -113,7 +147,7 @@ Four rules hold the thing together:
 - **Two database files, and the split is load-bearing.** `network.sqlite` is a disposable feed cache that ingest replaces wholesale. `user.sqlite` holds your favourites and nothing else touches it. They were one file once, and a routine timetable update deleted every starred stop.
 - **A staged feed is validated before the swap**, and the old database is moved aside rather than deleted — a truncated download is still valid SQLite.
 
-## Things the feed doesn't document
+## What the feed doesn't document
 
 Most of this app's design comes from measuring the real feeds rather than trusting the spec:
 
@@ -124,7 +158,7 @@ Most of this app's design comes from measuring the real feeds rather than trusti
 - **Vehicle positions have no occupancy data**, so there's no crowding UI — rather than a fabricated one.
 - **All 9,171 stop IDs are numeric**, which matters because the SQLite R-tree spatial index keys on `INTEGER`.
 
-## Performance notes
+## Performance
 
 Every number here was measured, not assumed:
 
@@ -142,3 +176,7 @@ Your location never leaves the device — it is used for map centring, nearest-s
 Timetable and real-time data © Department for Infrastructure and Transport, South Australia, published as open GTFS feeds. This project is not affiliated with, endorsed by, or supported by Adelaide Metro.
 
 Code is released under the [MIT Licence](LICENSE).
+
+<div align="center">
+<sub>Built in Adelaide 🇦🇺</sub>
+</div>

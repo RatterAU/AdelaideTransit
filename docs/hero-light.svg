@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-label="Adelaide Transit — do I need to leave now?">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FBFBFD"/>
+      <stop offset="1" stop-color="#EFF1F6"/>
+    </linearGradient>
+    <linearGradient id="fade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#E08C00" stop-opacity="0"/>
+      <stop offset="0.35" stop-color="#E08C00" stop-opacity="1"/>
+      <stop offset="1" stop-color="#E08C00" stop-opacity="1"/>
+    </linearGradient>
+    <clipPath id="card"><rect width="1200" height="300" rx="18"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#card)">
+    <rect width="1200" height="300" fill="url(#bg)"/>
+
+    <!-- map grid -->
+    <g stroke="#0B1B33" stroke-opacity="0.055" stroke-width="1">
+      <path d="M0 60H1200M0 120H1200M0 180H1200M0 240H1200"/>
+      <path d="M80 0V300M240 0V300M400 0V300M560 0V300M720 0V300M880 0V300M1040 0V300"/>
+    </g>
+    <g stroke="#0B1B33" stroke-opacity="0.09" stroke-width="1.5" fill="none">
+      <path d="M-20 214C120 214 180 150 300 150S470 96 560 96 780 40 900 40s260 0 340 0"/>
+      <path d="M-20 268C160 268 300 246 420 246s180 34 300 34 300-22 520-22"/>
+    </g>
+
+    <!-- route line -->
+    <g fill="none" stroke-linecap="round">
+      <path d="M700 196C760 196 792 132 862 132s96 40 150 40 108-28 168-28" stroke="url(#fade)" stroke-width="5"/>
+    </g>
+    <g fill="#FFFFFF" stroke="#E08C00" stroke-width="4">
+      <circle cx="700" cy="196" r="9"/>
+      <circle cx="862" cy="132" r="9"/>
+      <circle cx="1012" cy="172" r="9"/>
+    </g>
+    <circle cx="1180" cy="144" r="10" fill="#E08C00"/>
+
+    <!-- route badges -->
+    <g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="19" font-weight="700" text-anchor="middle">
+      <rect x="700" y="222" width="74" height="34" rx="17" fill="#1B3A6B"/>
+      <text x="737" y="245" fill="#FFFFFF">H33C</text>
+      <rect x="786" y="222" width="62" height="34" rx="17" fill="#F5A623"/>
+      <text x="817" y="245" fill="#1A1206">J1A</text>
+      <rect x="860" y="222" width="66" height="34" rx="17" fill="#8E1B2E"/>
+      <text x="893" y="245" fill="#FFFFFF">G20</text>
+      <rect x="938" y="222" width="66" height="34" rx="17" fill="#1F7A4D"/>
+      <text x="971" y="245" fill="#FFFFFF">801</text>
+    </g>
+
+    <!-- wordmark -->
+    <g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+      <text x="72" y="128" font-size="62" font-weight="800" letter-spacing="-1.6" fill="#0B1B33">Adelaide Transit</text>
+      <text x="74" y="176" font-size="26" font-weight="500" fill="#5A6577">Do I need to leave now?</text>
+      <text x="75" y="232" font-size="15" font-weight="600" letter-spacing="2.4" fill="#B36F00">GTFS &#183; REAL-TIME &#183; OFFLINE-FIRST &#183; SWIFTUI</text>
+    </g>
+
+    <rect x="0.5" y="0.5" width="1199" height="299" rx="18" fill="none" stroke="#0B1B33" stroke-opacity="0.10"/>
+  </g>
+</svg>
