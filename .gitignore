@@ -1,0 +1,20 @@
+# Xcode project is generated from project.yml — regenerate with `xcodegen generate`.
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+build/
+.build/
+
+# Swift Package Manager
+.swiftpm/
+Package.resolved
+
+# macOS
+.DS_Store
+
+# Feed caches / databases, if one is ever produced in-tree
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.zip

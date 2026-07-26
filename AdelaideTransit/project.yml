@@ -1,0 +1,81 @@
+name: AdelaideTransit
+options:
+  bundleIdPrefix: com.adelaidetransit
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+settings:
+  SWIFT_VERSION: 6.2
+  DEVELOPMENT_TEAM: ""
+  CODE_SIGN_STYLE: Automatic
+  # Xcode's "recommended settings" prompt asks for these. Set here, never through the prompt: "Perform
+  # Changes" writes into the .xcodeproj, which xcodegen regenerates from this file — the prompt would come
+  # back on the next generate, forever. Sandboxing build scripts is free for us (there are none) and
+  # inheriting the team from project settings is what a single-target project already does.
+  ENABLE_USER_SCRIPT_SANDBOXING: YES
+  ENABLE_STRING_CATALOG_SYMBOL_GENERATION: YES
+
+packages:
+  GRDB:
+    url: https://github.com/groue/GRDB.swift
+    from: 6.29.0
+  SwiftProtobuf:
+    url: https://github.com/apple/swift-protobuf
+    from: 1.28.0
+
+targets:
+  AdelaideTransit:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.0"
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.adelaidetransit.app
+      # iPhone only. "All interface orientations must be supported unless the app requires full screen" is
+      # an iPad-multitasking rule: an iPad-capable app that doesn't support all four orientations has to
+      # declare UIRequiresFullScreen. This is a personal iPhone app, so the rule simply doesn't apply —
+      # which beats opting out of multitasking on an iPad build nobody installs.
+      TARGETED_DEVICE_FAMILY: "1"
+    sources:
+      - path: App
+      - path: Data
+      - path: Features
+      - path: Resources
+    dependencies:
+      - package: GRDB
+        product: GRDB
+      - package: SwiftProtobuf
+        product: SwiftProtobuf
+    info:
+      path: App/Info.plist
+      properties:
+        UILaunchScreen: {}
+        # Declared rather than left to the default. Landscape included on purpose: a map is one of the few
+        # screens genuinely better wide. Upside-down is omitted, per iPhone convention.
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSLocationWhenInUseUsageDescription: "Adelaide Transit shows nearby stops and centres the map on your location."
+        ITSAppUsesNonExemptEncryption: false
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.adelaidetransit.app.refresh
+        UIBackgroundModes:
+          - fetch
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+    entitlements:
+      path: App/AdelaideTransit.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.adelaidetransit.app
+
+  AdelaideTransitTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "26.0"
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
+    sources:
+      - path: Tests
+    dependencies:
+      - target: AdelaideTransit
