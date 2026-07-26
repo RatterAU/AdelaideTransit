@@ -13,6 +13,9 @@ Package.resolved
 # macOS
 .DS_Store
 
+# Local editor/agent notes, not part of the project
+CLAUDE.md
+
 # Feed caches / databases, if one is ever produced in-tree
 *.sqlite
 *.sqlite-wal
