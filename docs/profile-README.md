@@ -1,4 +1,4 @@
-<img src="https://raw.githubusercontent.com/RatterAU/AdelaideTransit/main/docs/profile-banner.svg" width="480" alt="RatterAU — I build apps for things I want a better version of">
+<img src="https://raw.githubusercontent.com/RatterAU/AdelaideTransit/main/docs/profile-banner.svg?v=2" width="480" alt="RatterAU — I build apps for things I want a better version of">
 
 If the app doesn't exist, I make it. If it exists but does half of what I need, I make that too.
 
