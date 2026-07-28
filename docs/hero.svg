@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-label="Adelaide Transit — a live map of every Adelaide Metro bus, tram and train, with a real departure row showing route M44, LIVE at this stop, 2 minutes, 4:21 pm">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0F1622"/>
+      <stop offset="1" stop-color="#182234"/>
+    </linearGradient>
+    <linearGradient id="rule" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#F99D1E"/>
+      <stop offset="1" stop-color="#F99D1E" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="frame"><rect width="1200" height="360" rx="22"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#frame)">
+    <rect width="1200" height="360" fill="url(#bg)"/>
+
+    <!-- street substrate, matching the muted dark map style -->
+    <g stroke="#FFFFFF" stroke-opacity="0.05" stroke-width="1.5" fill="none">
+      <path d="M-20 250C150 250 210 186 340 186s180-60 280-60 250-48 380-48 260 6 260 6"/>
+      <path d="M-20 312C170 312 320 290 450 290s190 34 320 34 300-22 470-22"/>
+      <path d="M120 -20V380M300 -20V380M470 -20V380M900 -20V380M1060 -20V380"/>
+    </g>
+    <g fill="#2B3648" stroke="#8E98A8" stroke-opacity="0.35" stroke-width="2">
+      <circle cx="150" cy="300" r="5"/><circle cx="262" cy="286" r="5"/>
+      <circle cx="392" cy="272" r="5"/><circle cx="520" cy="258" r="5"/>
+    </g>
+
+    <!-- the vehicle: an orange route capsule with a bearing chevron, as drawn on the map -->
+    <g>
+      <path d="M-20 318C160 318 250 268 372 268s180 12 300 12" stroke="#F99D1E" stroke-opacity="0.28" stroke-width="5" fill="none" stroke-linecap="round"/>
+      <rect x="452" y="262" width="96" height="34" rx="17" fill="#F99D1E" stroke="#FFFFFF" stroke-opacity="0.85" stroke-width="2"/>
+      <text x="490" y="285" font-family="ui-sans-serif, -apple-system, 'SF Pro Text', Helvetica, Arial, sans-serif" font-size="17" font-weight="700" fill="#1A1206" text-anchor="middle">M44</text>
+      <path d="M522 272l10 7-10 7z" fill="#1A1206"/>
+    </g>
+
+    <!-- wordmark -->
+    <g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+      <text x="72" y="128" font-size="62" font-weight="800" letter-spacing="-1.8" fill="#FFFFFF">Adelaide Transit</text>
+      <rect x="75" y="150" width="132" height="3" rx="1.5" fill="url(#rule)"/>
+      <text x="74" y="194" font-size="25" font-weight="500" fill="#AEB6C4">Do I need to leave now?</text>
+      <text x="75" y="234" font-size="14" font-weight="600" letter-spacing="2.4" fill="#F99D1E" fill-opacity="0.95">LIVE TRACKING &#183; ADELAIDE METRO &#183; SWIFTUI</text>
+    </g>
+
+    <!-- a departure row, drawn exactly as the app draws it -->
+    <g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+      <rect x="672" y="70" width="468" height="220" rx="24" fill="#1C1C1E" stroke="#FFFFFF" stroke-opacity="0.10"/>
+
+      <text x="704" y="112" font-size="18" font-weight="700" fill="#FFFFFF">Zone C Paradise Interchange</text>
+      <text x="704" y="136" font-size="14" font-weight="500" fill="#8E8E93">1.7 km walking &#183; 21 min</text>
+      <line x1="704" y1="158" x2="1108" y2="158" stroke="#FFFFFF" stroke-opacity="0.10"/>
+
+      <rect x="704" y="182" width="70" height="34" rx="17" fill="#F99D1E"/>
+      <text x="739" y="205" font-size="17" font-weight="700" fill="#1A1206" text-anchor="middle">M44</text>
+
+      <text x="790" y="192" font-size="17" font-weight="600" fill="#FFFFFF">Marion</text>
+      <circle cx="798" cy="212" r="5" fill="#30D158"/>
+      <text x="812" y="218" font-size="14" font-weight="600" fill="#30D158">LIVE</text>
+      <text x="856" y="218" font-size="14" font-weight="500" fill="#8E8E93">&#183; at this stop</text>
+      <text x="962" y="218" font-size="14" font-weight="600" fill="#30D158">1551</text>
+      <text x="790" y="246" font-size="14" font-weight="500" fill="#8E8E93">22 min walk &#8212; you won&#8217;t make it</text>
+
+      <text x="1108" y="196" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="end">2 min</text>
+      <text x="1108" y="218" font-size="14" font-weight="500" fill="#8E8E93" text-anchor="end">4:21 pm</text>
+      <text x="1108" y="242" font-size="14" font-weight="600" fill="#FF453A" text-anchor="end">2 min late</text>
+    </g>
+
+    <!-- feed age chip, bottom-left of the map like the app -->
+    <g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+      <rect x="72" y="300" width="120" height="32" rx="16" fill="#FFFFFF" fill-opacity="0.10"/>
+      <g stroke="#C6CEDB" stroke-width="1.6" fill="none" stroke-linecap="round">
+        <path d="M92 310a7 7 0 010 12M88 313a3.5 3.5 0 010 6"/>
+      </g>
+      <circle cx="86" cy="316" r="1.6" fill="#C6CEDB"/>
+      <text x="106" y="321" font-size="14" font-weight="600" fill="#C6CEDB">19s old</text>
+    </g>
+
+    <rect x="0.5" y="0.5" width="1199" height="359" rx="22" fill="none" stroke="#FFFFFF" stroke-opacity="0.09"/>
+  </g>
+</svg>
