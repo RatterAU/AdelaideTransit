@@ -25,8 +25,24 @@ No accounts, no backend, no analytics. SwiftUI, on-device SQLite, straight off t
 
 </td>
 </tr>
+<tr>
+<td width="200" valign="top">
+<a href="https://github.com/RatterAU/tenfold"><img src="https://raw.githubusercontent.com/RatterAU/tenfold/main/docs/chain.png" width="190" alt="TENFOLD strike ladder"></a>
+</td>
+<td valign="top">
+
+### [TENFOLD](https://github.com/RatterAU/tenfold)
+
+Every SPX strike, in SPY terms — for 0DTE.
+
+SPY is not SPX ÷ 10. The ratio drifts, and on 0DTE that drift is a whole strike, so the mirror runs off the live ratio instead of the shortcut everyone quotes.
+
+Quote tiles, the live ratio, a depth picker and the strike ladder with the spot band. Opens in the browser: no install, no signup, no key.
+
+[Open it](https://ratterau.github.io/tenfold/) · one HTML file, 27 KB, no dependencies, no build step, no tracking.
+
+`HTML` · `Vanilla JS` · `0DTE` · `SPX/SPY`
+
+</td>
+</tr>
 </table>
-
-<br>
-
-<sub>Mostly Swift.</sub>
