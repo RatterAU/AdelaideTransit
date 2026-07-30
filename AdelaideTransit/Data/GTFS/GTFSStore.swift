@@ -164,6 +164,7 @@ actor GTFSStore {
              trips: try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM trips") ?? 0,
              stopTimes: try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM stop_times") ?? 0)
         }
+        try? staged.close() // see GTFSIngest.ingest — the file is moved and its sidecars deleted right after
         guard counts.stops >= 1_000, counts.trips >= 1_000, counts.stopTimes >= 100_000 else {
             try? FileManager.default.removeItem(at: Self.stagingDBURL)
             throw StagedFeedRejected(
@@ -176,7 +177,8 @@ actor GTFSStore {
         // Nothing user-owned lives in this file — favourites are in `user.sqlite`, which this never
         // touches. That is the whole point of the split: the timetable database is disposable, and
         // replacing it wholesale is allowed to be exactly as destructive as it looks.
-        dbQueue = nil // release file handle before replacing on disk
+        try? dbQueue?.close() // close, don't just release — deinit timing is not a file-handle guarantee
+        dbQueue = nil
         let fm = FileManager.default
 
         // Move the old file aside rather than deleting it, and only discard it once the new one is in

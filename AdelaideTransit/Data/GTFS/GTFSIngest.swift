@@ -110,8 +110,10 @@ enum GTFSIngest {
     /// Streaming ingest of one static GTFS zip into a fresh database file.
     /// Runs off-main; caller is responsible for atomically swapping the file in afterward.
     static func ingest(zipURL: URL, intoDatabaseAt dbURL: URL, meta: FeedMetadata) throws {
-        if FileManager.default.fileExists(atPath: dbURL.path) {
-            try FileManager.default.removeItem(at: dbURL)
+        // Sidecars too: deleting only the database leaves the previous attempt's `-wal`/`-shm` beside the
+        // new file, where SQLite tries to associate them with it.
+        for suffix in ["", "-wal", "-shm"] {
+            try? FileManager.default.removeItem(at: URL(fileURLWithPath: dbURL.path + suffix))
         }
         let zip = try ZipReader(fileURL: zipURL)
 
@@ -145,6 +147,10 @@ enum GTFSIngest {
         }
 
         try verify(dbQueue)
+        // Close explicitly rather than leaving it to deinit. The caller validates this file, moves it, and
+        // deletes its sidecars; any fd still open when that happens is an unlinked-vnode-in-use violation,
+        // which SQLite reports on the *next* access as a bare "disk I/O error" (code 10).
+        try? dbQueue.close()
     }
 
     private static func verify(_ dbQueue: DatabaseQueue) throws {
