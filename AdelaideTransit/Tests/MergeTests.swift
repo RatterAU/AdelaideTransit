@@ -178,6 +178,68 @@ struct MergeTests {
         #expect(merged[0].displayTime <= ts) // departed, not a future time
     }
 
+    /// The feed keeps publishing an alert after its active period ends. Nothing filtered on it, so finished
+    /// roadworks sat in the Alerts tab, in the tab badge, and as an amber banner on a favourite stop.
+    @Test func expiredAlertsAreNotActiveButOpenEndedOnesAre() {
+        func alert(to: Date?) -> ServiceAlert {
+            ServiceAlert(
+                id: "a", headerText: "", descriptionText: "", effect: .unknownEffect,
+                severity: .unknownSeverity, informedRouteIDs: [], informedStopIDs: [],
+                activeFrom: nil, activeTo: to
+            )
+        }
+        let now = midnight
+        #expect(alert(to: now.addingTimeInterval(-1)).isActive(now: now) == false)
+        #expect(alert(to: now.addingTimeInterval(3600)).isActive(now: now))
+        #expect(alert(to: nil).isActive(now: now)) // no end date is open-ended, not expired
+    }
+
+    // MARK: - stop search ranking
+
+    /// Ranking is the whole point of the rewrite: SQL can filter but the old `LIMIT 30` handed back rows in
+    /// table order. Words in any order must match, a typed stop number must win outright, and among equals
+    /// the nearest stop is the one the user is standing at.
+    @Test func stopSearchRanksCodeThenWordStartThenDistance() {
+        let far = StopSummary(id: "1", code: "10001", name: "Grenfell St", lat: -34.99, lon: 138.6)
+        let near = StopSummary(id: "2", code: "10002", name: "Grenfell St", lat: -34.92, lon: 138.6)
+        let buried = StopSummary(id: "3", code: "10003", name: "Ungrenfelled Rd", lat: -34.92, lon: 138.6)
+        let here = (lat: -34.92, lon: 138.6)
+
+        let tokens = StopSearch.tokens("grenfell st")
+        #expect(tokens == ["grenfell", "st"])
+        // Reversed words find the same stop — the old contiguous `%grenfell st%` pattern could not.
+        #expect(StopSearch.tokens("st grenfell").count == 2)
+
+        let ranked = StopSearch.rank([far, buried, near], tokens: tokens, near: here)
+        #expect(ranked.map(\.id) == ["2", "1", "3"]) // nearest word-start match, then far, then buried
+
+        // A typed stop number outranks everything, however far away it is.
+        let byCode = StopSearch.rank([near, far], tokens: StopSearch.tokens("10001"), near: here)
+        #expect(byCode.first?.id == "1")
+    }
+
+    /// The stop directly below the boundary is where the feed is unreliable: it drops that update while the
+    /// bus is still working toward the stop. Reporting it departed at its scheduled time is what made an
+    /// imminent bus disappear from its own stop and show up one stop on as "10 min late". It must stay live
+    /// and visible, bounded by the boundary stop's published arrival — but never past the feed's publish
+    /// time, or a bus that left 1–2 min ago still counts down as if it were coming.
+    @Test func stopJustBelowTheBoundaryStaysLiveAtTheNextStopsPublishedTime() {
+        let ts = midnight.addingTimeInterval(1000)
+        let nextArrival = midnight.addingTimeInterval(1060)
+        let rows = [departure(seq: 5, offset: 300, base: midnight)] // scheduled long past: a late bus
+        let merged = Merge.mergeDepartures(
+            rows, tripID: "T1",
+            frame: frame(
+                predictions: ["T1": [
+                    6: Prediction(arrival: nextArrival, departure: nil, delay: nil, scheduleRelationship: .scheduled)
+                ]],
+                timestamp: ts
+            )
+        )
+        #expect(merged[0].state == .live)
+        #expect(merged[0].displayTime == ts) // capped at publish time: never a future countdown for a bus already gone
+    }
+
     /// The guard on the boundary. A stop below it but whose scheduled time is still in the future must not be
     /// hidden as departed — a boundary that briefly jumps backward (measured: ~0.25% of trips) would otherwise
     /// erase a genuinely upcoming departure from the list.
@@ -230,6 +292,21 @@ struct MergeTests {
         #expect(resolved == expected)
         // Sanity: the trip now lands near "now" rather than a day out.
         #expect(abs(resolved.addingTimeInterval(TimeInterval(firstDep)).timeIntervalSince(now)) < 3600)
+    }
+
+    /// GTFS times are seconds from *service* midnight, defined as noon minus twelve hours. On Adelaide's two
+    /// daylight-saving changeover days that is an hour off calendar midnight, so anchoring at 00:00 shifted
+    /// every departure on those days by an hour — an 08:00 bus listed as 09:00 in October.
+    @Test func serviceMidnightHoldsAcrossDaylightSaving() {
+        // 5 Oct 2025: Adelaide clocks jump 02:00 → 03:00, so the day is 23 hours long.
+        for (day, month, year) in [(5, 10, 2025), (6, 4, 2025)] {
+            let noonish = AdelaideTZ.calendar.date(
+                from: DateComponents(year: year, month: month, day: day, hour: 9)
+            )!
+            let eightAM = AdelaideTZ.startOfDay(noonish).addingTimeInterval(8 * 3600)
+            #expect(AdelaideTZ.calendar.component(.hour, from: eightAM) == 8)
+            #expect(AdelaideTZ.calendar.component(.day, from: eightAM) == day)
+        }
     }
 
     @Test func middayTripResolvesToToday() {

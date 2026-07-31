@@ -22,6 +22,8 @@ struct TripDetailSheet: View {
     @State private var flyToToken = UUID()
     @State private var showMap = false
     @State private var ghostVehicle: LiveVehicle?
+    /// Stop tapped on the mini map, previewed before it opens.
+    @State private var previewStop: StopSummary?
     @State private var blockmateIDs: [String] = []
     @State private var routeLines: RouteLines?
     @State private var continuation: (
@@ -219,6 +221,7 @@ struct TripDetailSheet: View {
         .onChange(of: frame?.headerTimestamp) { _, _ in rebuildGeometry() }
         // Map mode needs room, and re-framing the bus+you on every switch beats leaving a stale viewport.
         .onChange(of: showMap) { _, isMap in
+            previewStop = nil
             guard isMap else { return }
             detent = .large
             frameBusInContext()
@@ -274,8 +277,14 @@ struct TripDetailSheet: View {
             markerScale: 1.0,
             onRegionChange: { _ in },
             onSelectStop: { stop in onSelectStop(stop) },
-            onSelectVehicle: { _ in }
+            onSelectVehicle: { _ in },
+            // Tapping a stop on the route answers "when does *this* bus get here" first; opening the stop is
+            // the second tap, on the card.
+            onPreviewStop: { stop in withAnimation(.snappy) { previewStop = stop } }
         )
+        .overlay(alignment: .bottom) {
+            if let previewStop { stopPreviewCard(previewStop) }
+        }
     }
 
     private var header: some View {
@@ -355,6 +364,15 @@ struct TripDetailSheet: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
+                    // Which route serves this stop, on the row itself — on the continuation section it is a
+                    // different number from the one in the header, and that is exactly where it matters.
+                    Text(dep.routeShortName)
+                        .font(.caption2).bold()
+                        .foregroundStyle(Theme.routeTextColor(dep.routeColor))
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(
+                            Theme.routeColor(dep.routeColor, seed: dep.routeShortName), in: Capsule()
+                        )
                     Text(dep.headsign)
                         .foregroundStyle(.primary)
                         .fontWeight(isYours ? .semibold : .regular)
@@ -376,7 +394,12 @@ struct TripDetailSheet: View {
                 }
                 HStack(spacing: 4) {
                     Image(systemName: dep.state.glyph).font(.caption2)
-                    Text(dep.state.label).font(.caption2)
+                    // Predictions without a GPS fix are realtime but not a sighting — don't call them LIVE.
+                    // With no vehicles in the feed at all we aren't polling positions, so we can't claim this
+                    // trip lacks one — `shownVehicle` also covers a bus still reporting under its previous trip.
+                    Text(dep.state == .live && shownVehicle == nil && !(frame?.vehicles.isEmpty ?? true)
+                         ? "Realtime — no GPS" : dep.state.label)
+                        .font(.caption2)
                 }
                 .foregroundStyle(dep.state.tint)
             }
@@ -404,6 +427,52 @@ struct TripDetailSheet: View {
         .strikethrough(dep.state == .cancelled)
         .contentShape(Rectangle())
         .listRowBackground(isYours ? Color.accentColor.opacity(0.10) : Color.clear)
+    }
+
+    /// What this bus does at a stop you tapped on the route: route, stop, when it gets there, how long that
+    /// is. Opaque and app-styled on purpose — MapKit's own callout bubble is translucent and unstyleable,
+    /// which over a map of coloured lines is barely readable.
+    private func stopPreviewCard(_ stop: StopSummary) -> some View {
+        let dep = stopTimes.first { $0.stopID == stop.id }
+            .flatMap { st in mergedStops.first { $0.stopSequence == st.seq } }
+        return HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(info?.shortName ?? "")
+                        .font(.caption).bold()
+                        .foregroundStyle(Theme.routeTextColor(info?.color))
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(routeColor, in: Capsule())
+                    Text(stop.name).font(.subheadline).bold().lineLimit(1)
+                }
+                if let dep {
+                    HStack(spacing: 6) {
+                        Text(dep.displayTime, style: .time).monospacedDigit()
+                        Text("· \(countdownText(to: dep.displayTime))").monospacedDigit()
+                        if let delta = dep.delta, abs(delta) >= lateThreshold {
+                            Text(deltaLabel(delta)).foregroundStyle(deltaColor(delta))
+                        }
+                    }
+                    .font(.caption)
+                } else {
+                    // A stop on the shape that this trip doesn't serve — say so rather than showing a blank.
+                    Text("Not served by this trip").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .background(.background, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
+        .shadow(radius: 8, y: 2)
+        .padding(12)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            previewStop = nil
+            onSelectStop(stop)
+        }
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     private func stopID(for dep: Departure) -> String {

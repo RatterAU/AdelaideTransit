@@ -405,7 +405,16 @@ actor RealtimeEngine {
                 if !selector.routeID.isEmpty { routeIDs.insert(selector.routeID) }
                 if !selector.stopID.isEmpty { stopIDs.insert(selector.stopID) }
             }
-            let period = a.activePeriod.first
+            // Every period, not just the first. A planned closure is routinely published as one alert with a
+            // window per night, and reading `activePeriod.first` meant the whole alert expired — and was
+            // filtered off the tab, the badge and the favourites banner — the morning after the first night.
+            // Any period without an end makes the alert open-ended.
+            let starts = a.activePeriod.compactMap {
+                $0.hasStart ? Date(timeIntervalSince1970: TimeInterval($0.start)) : nil
+            }
+            let ends = a.activePeriod.compactMap {
+                $0.hasEnd ? Date(timeIntervalSince1970: TimeInterval($0.end)) : nil
+            }
             result.append(ServiceAlert(
                 id: entity.id,
                 // Flattened once here rather than per render — the feed ships HTML in both fields.
@@ -414,11 +423,13 @@ actor RealtimeEngine {
                 effect: a.hasEffect ? a.effect : .unknownEffect,
                 severity: a.hasSeverityLevel ? a.severityLevel : .unknownSeverity,
                 informedRouteIDs: routeIDs, informedStopIDs: stopIDs,
-                activeFrom: (period?.hasStart == true) ? Date(timeIntervalSince1970: TimeInterval(period!.start)) : nil,
-                activeTo: (period?.hasEnd == true) ? Date(timeIntervalSince1970: TimeInterval(period!.end)) : nil
+                activeFrom: starts.min(),
+                activeTo: ends.count == a.activePeriod.count ? ends.max() : nil
             ))
         }
-        alerts = result
+        // Filtered here, once, rather than in each of the three consumers — the Alerts tab, the tab badge and
+        // the favourites banner have to agree on what "active" means.
+        alerts = result.filter { $0.isActive() }
         emitFrame()
         return true
     }

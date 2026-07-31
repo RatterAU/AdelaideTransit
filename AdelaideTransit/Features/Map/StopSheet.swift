@@ -13,6 +13,10 @@ struct StopSheet: View {
     @State private var favouriteID: Int64?
     @State private var showPast = false
     @State private var routedWalk: WalkingEstimator.Walk?
+    @State private var departuresLoadedAt: Date = .distantPast
+    /// Same interval the favourites list reloads on: the schedule query is cheap, re-running it on every 15s
+    /// frame is not, and a query this old is a few tail rows behind at worst.
+    private static let scheduleReloadInterval: TimeInterval = 5 * 60
     @AppStorage("pastDeparturesWindowMinutes") private var pastWindowMinutes: Double = 30
     @AppStorage("departureWindowHours") private var departureWindowHours: Double = 2
     @AppStorage("hapticsEnabled") private var haptics = true
@@ -51,7 +55,8 @@ struct StopSheet: View {
                             Button { onSelectTrip(dep.tripID) } label: {
                                 DepartureRow(
                                     departure: dep, isPast: true, walkSeconds: nil,
-                                    vehicleLabel: vehicleLabel(for: dep)
+                                    vehicleLabel: vehicleLabel(for: dep),
+                                    hasVehicle: hasVehicle(for: dep)
                                 )
                             }
                             .buttonStyle(.plain)
@@ -63,7 +68,8 @@ struct StopSheet: View {
                         DepartureRow(
                             departure: dep, isPast: false,
                             walkSeconds: walkSeconds, stopsAway: stopsAway(for: dep),
-                            vehicleLabel: vehicleLabel(for: dep)
+                            vehicleLabel: vehicleLabel(for: dep),
+                            hasVehicle: hasVehicle(for: dep)
                         )
                     }
                     .buttonStyle(.plain)
@@ -76,6 +82,24 @@ struct StopSheet: View {
         // previous stop's departures until something else happened to reload them.
         .task(id: stop.id) { await load() }
         .task(id: walkKey) { await routeWalk() }
+        // The rows are fetched once and merged against every frame, so a sheet left open — which this one is
+        // built for, background interaction is enabled and you can keep panning the map — watched its window
+        // slide off the end of what it had fetched and decayed to an empty list that never recovered.
+        .task(id: frame?.headerTimestamp) {
+            guard Date.now.timeIntervalSince(departuresLoadedAt) > Self.scheduleReloadInterval else { return }
+            await load()
+        }
+    }
+
+    /// Whether we can say anything at all about GPS for this trip. With *no* vehicles in the whole feed we
+    /// aren't polling vehicle_positions — Settings' vehicle toggle turns that poll off, and the Favourites
+    /// screen never asks for it — so "no GPS" would be a statement about our own polling, not about the bus.
+    /// A fix older than the stale cutoff doesn't count: the map stops drawing the bus at that age, so a row
+    /// claiming a position the map isn't showing is the same contradiction in the other direction.
+    private func hasVehicle(for departure: Departure) -> Bool {
+        guard let frame, !frame.vehicles.isEmpty else { return true }
+        guard let vehicle = frame.vehicles[departure.tripID] else { return false }
+        return Date.now.timeIntervalSince(vehicle.timestamp) <= GhostCutoffs.staleAfter
     }
 
     /// Fleet number of the bus running this trip, when it's reporting one.
@@ -200,6 +224,7 @@ struct StopSheet: View {
             from: Date().addingTimeInterval(-pastWindow),
             window: pastWindow + departureWindowHours * 3600
         )) ?? []
+        departuresLoadedAt = .now
         favouriteID = (try? await store.favourites())?.first { $0.stopID == stop.id && $0.routeID == nil }?.id
     }
 
@@ -224,6 +249,9 @@ struct DepartureRow: View {
     /// Fleet number of the bus itself — the one thing that identifies the vehicle rather than the service,
     /// so you can tell which bus you're looking at when two of the same route are due together.
     var vehicleLabel: String? = nil
+    /// Whether a GPS position actually exists for this trip. Predicted times alone are realtime, but they are
+    /// not a sighting of the bus — calling them "LIVE" next to an empty map is the claim the app can't back.
+    var hasVehicle: Bool = false
     @AppStorage("lateThresholdSeconds") private var lateThreshold: Double = 60
     @AppStorage("use24HourClock") private var use24Hour = false
     @AppStorage(FavouriteRoutes.key) private var favouriteRouteIDsRaw = ""
@@ -265,7 +293,7 @@ struct DepartureRow: View {
                 Text(departure.headsign).lineLimit(1)
                 HStack(spacing: 4) {
                     Image(systemName: isPast ? "checkmark.circle" : departure.state.glyph).font(.caption2)
-                    Text(isPast ? "Departed" : departure.state.label).font(.caption2)
+                    Text(isPast ? "Departed" : stateLabel).font(.caption2)
                     if let stopsAway, let text = stopsAwayText(stopsAway), !isPast {
                         Text("· \(text)").font(.caption2)
                     }
@@ -316,6 +344,12 @@ struct DepartureRow: View {
         .opacity(isPast ? 0.55 : 1)
         .strikethrough(departure.state == .cancelled)
         .animation(.snappy, value: departure.displayTime)
+    }
+
+    /// "LIVE" only when there is a GPS fix behind it. A feed prediction with no vehicle *is* realtime — it
+    /// just isn't a sighting of the bus, so it says so rather than implying a dot on the map.
+    private var stateLabel: String {
+        departure.state == .live && !hasVehicle ? "Realtime — no GPS" : departure.state.label
     }
 
     private var clockText: String { departure.displayTime.formatted(clockStyle(use24Hour: use24Hour)) }

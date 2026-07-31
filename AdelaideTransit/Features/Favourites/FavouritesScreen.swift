@@ -13,6 +13,9 @@ struct FavouritesScreen: View {
     @State private var departuresByStop: [String: [Departure]] = [:]
     @State private var lastFrame: RealtimeFrame?
     @State private var departuresLoadedAt: Date = .distantPast
+    /// The same window the stop sheet uses. This screen used the store's 90-minute default and said so in
+    /// fixed text, so widening the window in Settings changed one screen and not the other.
+    @AppStorage("departureWindowHours") private var departureWindowHours: Double = 2
     /// The schedule query itself is cheap; re-running it on every 15s frame is not, and the timetable a
     /// query behind is at most a few minutes of tail rows.
     private static let scheduleReloadInterval: TimeInterval = 5 * 60
@@ -59,6 +62,7 @@ struct FavouritesScreen: View {
                                         departures: mergedDepartures(for: fav),
                                         distance: distances[fav.id],
                                         alert: closure(for: fav),
+                                        windowHours: departureWindowHours,
                                         onTap: { openOnMap(fav) },
                                         onRename: { newLabel in Task { await rename(fav, to: newLabel) } }
                                     )
@@ -99,8 +103,14 @@ struct FavouritesScreen: View {
     private func mergedDepartures(for fav: Favourite) -> [Departure] {
         let rows = departuresByStop[fav.stopID] ?? []
         let filtered = fav.routeID == nil ? rows : rows.filter { $0.routeID == fav.routeID }
+        // Drop what has already gone. The rows are fetched once and merged against every frame, so without
+        // this a favourite kept showing the three buses it was showing five minutes ago — and `minutesText`
+        // clamps a negative countdown to "now", so they read as three buses about to leave.
+        // A minute of grace: the one that left seconds ago is still the one you might catch.
+        let cutoff = Date.now.addingTimeInterval(-60)
         return Dictionary(grouping: filtered, by: \.tripID)
             .flatMap { tripID, group in Merge.mergeDepartures(group, tripID: tripID, frame: lastFrame) }
+            .filter { $0.displayTime >= cutoff }
             .sorted { $0.displayTime < $1.displayTime }
     }
 
@@ -127,7 +137,9 @@ struct FavouritesScreen: View {
         favourites = ((try? await store.favourites()) ?? [])
         var fresh: [String: [Departure]] = [:]
         for stopID in Set(favourites.map(\.stopID)) {
-            fresh[stopID] = (try? await store.departures(stopID: stopID, from: Date())) ?? []
+            fresh[stopID] = (try? await store.departures(
+                stopID: stopID, from: Date(), window: departureWindowHours * 3600
+            )) ?? []
         }
         departuresByStop = fresh
         departuresLoadedAt = .now

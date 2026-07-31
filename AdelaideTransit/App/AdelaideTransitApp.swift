@@ -5,7 +5,7 @@ private let refreshTaskID = "com.adelaidetransit.app.refresh"
 private let lastRefreshCheckDayKey = "lastTimetableCheckDay"
 
 private struct GTFSStoreKey: EnvironmentKey {
-    static let defaultValue = GTFSStore()
+    static let defaultValue = GTFSStore.shared
 }
 private struct RealtimeEngineKey: EnvironmentKey {
     static let defaultValue = RealtimeEngine()
@@ -59,7 +59,7 @@ final class AppBootstrap {
 
 @main
 struct AdelaideTransitApp: App {
-    @State private var store = GTFSStore()
+    @State private var store = GTFSStore.shared
     @State private var engine = RealtimeEngine()
     @State private var bootstrap = AppBootstrap()
     @Environment(\.scenePhase) private var scenePhase
@@ -102,9 +102,9 @@ struct AdelaideTransitApp: App {
     private static func handleBackgroundRefresh(task: BGAppRefreshTask) {
         scheduleBackgroundRefresh()
         let operation = Task {
-            let backgroundStore = GTFSStore()
+            // The app's own store, not a second one on the same files — see `GTFSStore.shared`.
             let allowCellular = UserDefaults.standard.bool(forKey: "allowCellularUpdates")
-            try? await backgroundStore.refreshIfNeeded(allowCellular: allowCellular)
+            try? await GTFSStore.shared.refreshIfNeeded(allowCellular: allowCellular)
             task.setTaskCompleted(success: true)
         }
         task.expirationHandler = { operation.cancel() }

@@ -99,12 +99,24 @@ enum GTFSIngest {
         return (!unchanged, FeedMetadata(etag: etag, lastModified: lastModified))
     }
 
-    static func downloadZip(to destination: URL) async throws {
-        let (tempURL, _) = try await URLSession.shared.download(from: staticFeedURL)
+    /// Returns the feed identity carried by the download itself.
+    ///
+    /// The `HEAD` probe is the usual source of it, but the probe can fail where the download succeeds — a
+    /// proxy that rejects `HEAD`, a flaky first launch — and an ingest recorded with no identity makes every
+    /// later daily check compare a real `ETag` against nil, conclude "changed", and rebuild the whole
+    /// database. Every day, forever. The response to the request we already made carries the same headers.
+    @discardableResult
+    static func downloadZip(to destination: URL) async throws -> FeedMetadata {
+        let (tempURL, response) = try await URLSession.shared.download(from: staticFeedURL)
         if FileManager.default.fileExists(atPath: destination.path) {
             try FileManager.default.removeItem(at: destination)
         }
         try FileManager.default.moveItem(at: tempURL, to: destination)
+        let http = response as? HTTPURLResponse
+        return FeedMetadata(
+            etag: http?.value(forHTTPHeaderField: "ETag"),
+            lastModified: http?.value(forHTTPHeaderField: "Last-Modified")
+        )
     }
 
     /// Streaming ingest of one static GTFS zip into a fresh database file.

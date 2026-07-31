@@ -11,7 +11,16 @@ enum AdelaideTZ {
         cal.timeZone = timeZone
         return cal
     }()
-    static func startOfDay(_ date: Date) -> Date { calendar.startOfDay(for: date) }
+    /// The GTFS *service* midnight of the day `date` falls in — noon minus twelve hours, per the spec, not
+    /// calendar midnight. Adelaide observes daylight saving, so twice a year the day is 23 or 25 hours long
+    /// and the two are an hour apart: anchoring at 00:00 put every departure on the October changeover day
+    /// an hour late and every one on the April day an hour early, across the whole app at once.
+    static func startOfDay(_ date: Date) -> Date {
+        guard let noon = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: date) else {
+            return calendar.startOfDay(for: date)
+        }
+        return noon.addingTimeInterval(-12 * 3600)
+    }
     /// Straight from components rather than a `DateFormatter`. The old version constructed a formatter per
     /// call — the expensive half of using one — inside the per-service-day loop of every departures query.
     /// It's also Sendable, which a shared `DateFormatter` is not.
@@ -22,6 +31,14 @@ enum AdelaideTZ {
 }
 
 actor GTFSStore {
+    /// One store per process, deliberately.
+    ///
+    /// The background refresh task built its own, which meant two actors holding the same two files open with
+    /// no way to serialise against each other: a swap performed by one moves the database out from under the
+    /// other's open handle, and that one goes on answering every query from the unlinked old file until the
+    /// app is relaunched — a timetable update that appears to have done nothing.
+    static let shared = GTFSStore()
+
     static let appGroupID = "group.com.adelaidetransit.app"
 
     static var containerDirectory: URL {
@@ -118,7 +135,7 @@ actor GTFSStore {
         // simply never stored them.
         let probe = try? await GTFSIngest.remoteFeedChanged(against: storedMeta)
         let changed: Bool
-        let newMeta: GTFSIngest.FeedMetadata
+        var newMeta: GTFSIngest.FeedMetadata
         if force || firstLaunch {
             changed = true
             newMeta = probe?.meta ?? storedMeta
@@ -132,7 +149,13 @@ actor GTFSStore {
             guard await currentPathIsWiFiOrWired() else { return }
         }
 
-        try await GTFSIngest.downloadZip(to: Self.stagingZipURL)
+        let downloadedMeta = try await GTFSIngest.downloadZip(to: Self.stagingZipURL)
+        // A probe that failed (or a server that answers `HEAD` with nothing) leaves us about to record an
+        // identity of nil against a database we did rebuild — which is what makes every later check see
+        // "changed" and rebuild again. The download's own response carries the same headers; use them.
+        if newMeta.etag == nil && newMeta.lastModified == nil {
+            newMeta = downloadedMeta
+        }
         // Off the actor. `ingest` is synchronous and runs for tens of seconds — parsing 1.16M stop_times and
         // writing them — and called directly it held this actor's executor for all of it, so every query the
         // UI made was queued behind the rebuild. It touches only the staging file, which nothing else has
@@ -352,16 +375,29 @@ actor GTFSStore {
         return result
     }
 
-    func searchStops(matching query: String) throws -> [StopSummary] {
-        guard let dbQueue, !query.isEmpty else { return [] }
-        let pattern = "%\(query)%"
-        return try dbQueue.read { db in
+    /// Every word of the query has to appear somewhere in the stop, in any order, and the *ranking* happens in
+    /// Swift (`StopSearch`) over a generous candidate set. The old version was one `%query%` pattern with
+    /// `LIMIT 30` in SQL: it demanded the user's words be contiguous and in the feed's own order, then
+    /// truncated to whichever rows the table stored first, with no ordering at all.
+    func searchStops(matching query: String, near: (lat: Double, lon: Double)? = nil) throws -> [StopSummary] {
+        guard let dbQueue else { return [] }
+        let tokens = StopSearch.tokens(query)
+        guard !tokens.isEmpty else { return [] }
+
+        let clause = tokens.map { _ in "(name LIKE ? OR code LIKE ?)" }.joined(separator: " AND ")
+        var arguments = StatementArguments()
+        for token in tokens { arguments += ["%\(token)%", "%\(token)%"] }
+
+        // The scan is unindexed either way — `LIKE '%…%'` can't use one — so the cap is only there to bound
+        // the ranking, not the scan. 300 is ten pages of results nobody scrolls, over 9171 stops.
+        let candidates = try dbQueue.read { db in
             try Row.fetchAll(db, sql: """
                 SELECT id, code, name, lat, lon FROM stops
-                WHERE name LIKE ? OR code LIKE ? LIMIT 30
-                """, arguments: [pattern, pattern])
+                WHERE \(clause) LIMIT 300
+                """, arguments: arguments)
                 .map { StopSummary(id: $0["id"], code: $0["code"], name: $0["name"], lat: $0["lat"], lon: $0["lon"]) }
         }
+        return StopSearch.rank(candidates, tokens: tokens, near: near)
     }
 
     /// Scheduled departures at a stop within [from, from+window], across the two service-days
@@ -372,8 +408,12 @@ actor GTFSStore {
 
         var results: [Departure] = []
         for daysAgo in [0, 1] {
-            let serviceDate = AdelaideTZ.calendar.date(byAdding: .day, value: -daysAgo, to: AdelaideTZ.startOfDay(from))!
-            let serviceIDs = try activeServiceIDs(on: serviceDate)
+            // Shift the *date* first, then anchor it. Anchoring first and subtracting a day is a day of
+            // fixed length, which the changeover days aren't — and the anchor itself can land at 23:00 the
+            // evening before, so the calendar lookup has to key off the day, not off the anchor.
+            let day = AdelaideTZ.calendar.date(byAdding: .day, value: -daysAgo, to: from)!
+            let serviceDate = AdelaideTZ.startOfDay(day)
+            let serviceIDs = try activeServiceIDs(on: day)
             guard !serviceIDs.isEmpty else { continue }
             let placeholders = serviceIDs.map { _ in "?" }.joined(separator: ",")
             // Bound the scan to the window in SQL. Without this every call read *every* departure of the

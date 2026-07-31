@@ -79,11 +79,13 @@ final class StopDotView: MKAnnotationView {
         layer.shadowOffset = CGSize(width: 0, height: 1)
         layer.shouldRasterize = true
         layer.rasterizationScale = traitCollection.displayScale
-        canShowCallout = false
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func configure(isFavourite: Bool) {
+        // Never the system callout: its bubble is translucent and styled by MapKit, which reads as a
+        // half-legible grey blob over the map. The trip sheet draws its own card instead.
+        canShowCallout = false
         let size = isFavourite ? Self.favouriteSize : Self.plainSize
         frame = size
         layer.cornerRadius = size.height / 2
@@ -228,6 +230,10 @@ struct MapViewRepresentable: UIViewRepresentable {
     let onRegionChange: (MKCoordinateRegion) -> Void
     let onSelectStop: (StopSummary) -> Void
     let onSelectVehicle: (String) -> Void
+    /// When set, a stop tap previews the stop rather than opening it — the caller draws its own card and
+    /// decides what a second tap does. Nil (the main map) keeps the single tap that goes straight there,
+    /// where there is no trip context worth previewing.
+    var onPreviewStop: ((StopSummary) -> Void)? = nil
 
     func makeUIView(context: Context) -> MKMapView {
         let map = MKMapView()
@@ -282,6 +288,7 @@ struct MapViewRepresentable: UIViewRepresentable {
         private var lastStopsVersion = -1
         private var lastFavourites: Set<String> = []
         private var lastRouteSignature = ""
+        private var lastMarkerScale: CGFloat?
         var lastEmphasis: String?
         var lastFlyToID: UUID?
 
@@ -356,6 +363,13 @@ struct MapViewRepresentable: UIViewRepresentable {
             // A trip that just gained a live fix must drop its ghost, so live always wins on tripID. On the
             // full map there are no ghosts (they belong to the trip sheet), so skip building the live-ID set
             // over ~1000 vehicles on every render when nothing needs de-duping against it.
+            // Marker size is a Settings slider, and it reaches a view only through `configure`. Reconfiguring
+            // solely on a vehicle-property change meant dragging the slider did nothing to the buses already
+            // on screen — they kept the size they were created at until something else happened to rebuild
+            // them, which on a map you're already looking at is never.
+            let scaleChanged = parent.markerScale != lastMarkerScale
+            lastMarkerScale = parent.markerScale
+
             let all: [(LiveVehicle, Bool)]
             if ghosts.isEmpty {
                 all = vehicles.map { ($0, false) }
@@ -373,7 +387,8 @@ struct MapViewRepresentable: UIViewRepresentable {
                 if let existing = vehicleAnnotations[vehicle.tripID], existing.isGhost == isGhost {
                     // Coordinate animates itself; reconfigure the on-screen view only when bearing/route/colour
                     // actually changed — which is a new publish, not every render.
-                    if existing.update(from: vehicle, routes: routes),
+                    let redraw = existing.update(from: vehicle, routes: routes)
+                    if redraw || scaleChanged,
                        let view = map.view(for: existing) as? VehicleMarkerView {
                         view.configure(
                             routeShortName: existing.routeShortName,
@@ -423,6 +438,8 @@ struct MapViewRepresentable: UIViewRepresentable {
 
         func mapView(_ mapView: MKMapView, didSelect view: MKAnnotationView) {
             if let stopAnn = view.annotation as? StopAnnotation {
+                mapView.deselectAnnotation(stopAnn, animated: false)
+                if let preview = parent.onPreviewStop { return preview(stopAnn.stop) }
                 parent.onSelectStop(stopAnn.stop)
                 mapView.deselectAnnotation(stopAnn, animated: false)
             } else if let vehicleAnn = view.annotation as? VehicleAnnotation {

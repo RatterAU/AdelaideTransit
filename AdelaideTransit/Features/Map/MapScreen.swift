@@ -42,6 +42,9 @@ struct MapScreen: View {
     @State private var tripStopTimes: [(seq: Int, stopID: String, name: String, lat: Double, lon: Double, dep: Int)] = []
     @State private var tripShapePoints: [(lat: Double, lon: Double, dist: Double?)] = []
     @State private var tripRouteColor: Color = .accentColor
+    /// Kept alongside the colour so the ghost marker can carry a route: `VehicleAnnotation` resolves its
+    /// badge through `routes[routeID]`, and a nil id rendered every schedule-interpolated bus as "?".
+    @State private var tripRouteID: String?
     /// Memoised: the split is an O(shape) scan and shapes run to thousands of points. As a computed
     /// property it re-ran on every render — including every 1s clock tick — not just when the bus moved.
     @State private var tripRouteLines: RouteLines?
@@ -160,7 +163,7 @@ struct MapScreen: View {
             now: .now
         ) else { return nil }
         return LiveVehicle(
-            tripID: tripID, vehicleLabel: nil, routeID: nil, directionID: nil,
+            tripID: tripID, vehicleLabel: nil, routeID: tripRouteID, directionID: nil,
             lat: position.lat, lon: position.lon, bearing: nil, speedMS: nil,
             timestamp: .now, currentStopSequence: nil
         )
@@ -245,8 +248,17 @@ struct MapScreen: View {
             fly(to: CLLocationCoordinate2D(latitude: newValue.lat, longitude: newValue.lon), spanDelta: 0.01)
             router.pendingStop = nil
         }
-        .onChange(of: locationManager.lastLocation?.latitude) { _, _ in
-            guard let loc = locationManager.lastLocation, !hasCenteredOnUser, autoCenterOnLaunch else { return }
+        // `initial: true` for the same reason `pendingStop` needs it: the app opens on Favourites, so the map
+        // is built lazily — by the time it first appears the location fix has usually already landed, and a
+        // plain `onChange` never fires for a value that was already there. "Auto-centre at launch" did
+        // nothing at all except in the race where you opened the map before the first fix.
+        //
+        // Guarded so it can't steal a deliberate move: both this and the `pendingStop` handler fire on that
+        // first appear, and either order is safe — a stop still pending, or a fly already issued, means the
+        // user asked to be somewhere specific.
+        .onChange(of: locationManager.lastLocation?.latitude, initial: true) { _, _ in
+            guard let loc = locationManager.lastLocation, !hasCenteredOnUser, autoCenterOnLaunch,
+                  flyTo == nil, presented == nil, router.pendingStop == nil else { return }
             hasCenteredOnUser = true
             fly(to: loc, spanDelta: 0.03)
         }
@@ -366,7 +378,10 @@ struct MapScreen: View {
                             return
                         }
                         guard (try? await Task.sleep(for: .milliseconds(250))) != nil else { return }
-                        let hits = (try? await store.searchStops(matching: searchText)) ?? []
+                        // Ranked against where you are: of the many stops on a named street, the near one is
+                        // the one you meant.
+                        let here = locationManager.lastLocation.map { (lat: $0.latitude, lon: $0.longitude) }
+                        let hits = (try? await store.searchStops(matching: searchText, near: here)) ?? []
                         guard !Task.isCancelled else { return }
                         searchResults = hits
                     }
@@ -385,24 +400,45 @@ struct MapScreen: View {
             .glassEffect(.regular, in: .capsule)
             .padding(.horizontal)
 
+            // A `List` here brought its own inset grouped background, separators and row insets, none of
+            // which match the glass capsule above it — it read as a chunk of Settings dropped on the map.
+            // A plain scroll of rows takes the same glass treatment as the search bar.
             if !searchResults.isEmpty {
-                List(searchResults) { stop in
-                    Button {
-                        searchFocused = false
-                        showStop(stop)
-                        fly(to: CLLocationCoordinate2D(latitude: stop.lat, longitude: stop.lon), spanDelta: 0.01)
-                        searchText = ""
-                        searchResults = []
-                    } label: {
-                        VStack(alignment: .leading) {
-                            Text(stop.name)
-                            if let code = stop.code { Text(code).font(.caption).foregroundStyle(.secondary) }
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(searchResults.enumerated()), id: \.element.id) { index, stop in
+                            Button {
+                                searchFocused = false
+                                showStop(stop)
+                                fly(to: CLLocationCoordinate2D(latitude: stop.lat, longitude: stop.lon), spanDelta: 0.01)
+                                searchText = ""
+                                searchResults = []
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "mappin.circle.fill")
+                                        .foregroundStyle(.tint)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(stop.name).lineLimit(1)
+                                        if let code = stop.code, !code.isEmpty {
+                                            Text(code).font(.caption).foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    Spacer(minLength: 0)
+                                }
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            if index != searchResults.count - 1 {
+                                Divider().padding(.leading, 44)
+                            }
                         }
                     }
                 }
                 .scrollDismissesKeyboard(.immediately)
-                .frame(maxHeight: 240)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                .frame(maxHeight: 260)
+                .glassEffect(.regular, in: .rect(cornerRadius: 20))
                 .padding(.horizontal)
             }
         }
@@ -445,12 +481,15 @@ struct MapScreen: View {
         guard let tripID = selectedTripID else {
             tripStopTimes = []
             tripShapePoints = []
+            tripRouteID = nil
             tripRouteLines = nil
             tripGhostVehicle = nil
             stopsVersion &+= 1
             return
         }
-        tripRouteColor = Theme.routeColor((try? await store.tripInfo(tripID: tripID))?.color)
+        let info = try? await store.tripInfo(tripID: tripID)
+        tripRouteColor = Theme.routeColor(info?.color)
+        tripRouteID = info?.routeID
         tripShapePoints = (try? await store.shape(tripID: tripID)) ?? []
         tripStopTimes = (try? await store.allStopTimes(tripID: tripID)) ?? []
         stopsVersion &+= 1

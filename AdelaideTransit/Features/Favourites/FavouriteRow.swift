@@ -12,6 +12,8 @@ struct FavouriteRow: View {
     /// A closure, detour or stop-moved alert naming this stop. Shown on the row itself: a stop you starred
     /// is one you actually walk to, and finding out it's shut from the Alerts tab is finding out too late.
     var alert: ServiceAlert?
+    /// So the empty state names the window actually queried rather than a hardcoded 90 minutes.
+    var windowHours: Double = 2
     let onTap: () -> Void
     let onRename: (String) -> Void
     @AppStorage(FavouriteRoutes.key) private var favouriteRouteIDsRaw = ""
@@ -45,7 +47,7 @@ struct FavouriteRow: View {
                 }
 
                 if departures.isEmpty {
-                    Text("No departures in the next 90 min")
+                    Text("No departures in the next \(windowText)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
@@ -93,6 +95,11 @@ struct FavouriteRow: View {
 
     @State private var showRename = false
     @State private var renamePrompt = ""
+
+    private var windowText: String {
+        windowHours < 1 ? "\(Int(windowHours * 60)) min"
+            : windowHours == 1 ? "hour" : "\(Int(windowHours)) hours"
+    }
 
     private func minutesText(_ dep: Departure) -> String {
         let minutes = Int(dep.displayTime.timeIntervalSinceNow / 60)

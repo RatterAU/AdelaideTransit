@@ -21,6 +21,16 @@ struct ServiceAlert: Sendable, Identifiable, Equatable {
     let informedStopIDs: Set<String>
     let activeFrom: Date?
     let activeTo: Date?
+
+    /// Whether this alert has not yet expired. The feed keeps publishing an alert past the end of its active
+    /// period and nothing filtered on it: the Alerts tab listed finished roadworks under a heading that reads
+    /// "No active alerts" when empty, the tab badge counted them, and a favourite kept an amber closure
+    /// banner for a closure that had ended. A missing end is open-ended, not expired. Alerts starting in the
+    /// future are kept — planned works are exactly what you want warning of, and the row shows when.
+    func isActive(now: Date = .now) -> Bool {
+        guard let activeTo else { return true }
+        return activeTo >= now
+    }
 }
 
 struct RealtimeFrame: Sendable {
@@ -99,6 +109,26 @@ enum Merge {
                     }
                 }
 
+                // The stop *directly* below the boundary is not reliably passed: the feed drops a stop's update
+                // while the bus is still working toward it, so a bus physically at the stop reads as one stop
+                // on. Marking it departed at its long-gone scheduled time is what made an imminent bus vanish
+                // from the list and reappear at the next stop as "10 min late". Its time here is bounded by the
+                // boundary stop's own published arrival — a hop away, in the future — so show that instead.
+                // ponytail: the next stop's arrival is one hop long, so it's capped at the feed's publish
+                // time — worst case this reads "now" for a bus that just left, never a future countdown for
+                // one already gone. Subtracting the real scheduled gap needs the next stop's scheduled time,
+                // which a stop sheet (one stop's rows) doesn't have; pass the whole trip's stop_times in if
+                // "now" instead of "departed" starts to matter.
+                //
+                // Gated on the same "its scheduled time has come" condition as the departed branch below, so a
+                // stop the bus genuinely hasn't reached yet still runs to timetable rather than inheriting a
+                // later stop's time.
+                if let passedBoundary, dep.stopSequence == passedBoundary - 1,
+                   let ts = frame.headerTimestamp, dep.scheduledTime <= ts,
+                   let nextTime = tripPredictions[UInt32(passedBoundary)]?.time {
+                    return restate(dep, .live, liveTime: min(nextTime, ts))
+                }
+
                 // A stop below the boundary the bus has already served — the feed dropped its update. It has
                 // departed, no later than the feed's publish time; showing the timetable there is what made a
                 // bus that had moved on still read "due in 2 min", the list contradicting the GPS dot on the
@@ -172,7 +202,10 @@ enum Merge {
     /// first departure closest to now.
     static func serviceDate(firstDeparture: Int, now: Date) -> Date {
         let today = AdelaideTZ.startOfDay(now)
-        guard let yesterday = AdelaideTZ.calendar.date(byAdding: .day, value: -1, to: today) else { return today }
+        // A day back from `now`, then anchored — not a day back from the anchor. On a daylight-saving
+        // changeover the two differ by an hour, which is a whole trip's worth of wrong times.
+        guard let yesterday = AdelaideTZ.calendar.date(byAdding: .day, value: -1, to: now)
+            .map(AdelaideTZ.startOfDay) else { return today }
         let distance = { (midnight: Date) in
             abs(midnight.addingTimeInterval(TimeInterval(firstDeparture)).timeIntervalSince(now))
         }
