@@ -134,8 +134,13 @@ enum Merge {
                 // bus that had moved on still read "due in 2 min", the list contradicting the GPS dot on the
                 // map. Gated on the scheduled time having already come (using the feed timestamp as "now") so a
                 // boundary that briefly jumps backward can't hide a stop the bus genuinely hasn't reached.
+                //
+                // The scheduled-time gate only applies one stop below the boundary, where a backward jump is
+                // possible. Two or more below, an early bus would otherwise keep counting down at a stop the
+                // boundary (and the route line, which reads the same boundary) already shows as passed.
                 if let passedBoundary, dep.stopSequence < passedBoundary,
-                   let ts = frame.headerTimestamp, dep.scheduledTime <= ts {
+                   let ts = frame.headerTimestamp,
+                   dep.scheduledTime <= ts || dep.stopSequence < passedBoundary - 1 {
                     return restate(dep, .live, liveTime: min(dep.scheduledTime, ts))
                 }
 

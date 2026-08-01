@@ -240,10 +240,26 @@ struct MergeTests {
         #expect(merged[0].displayTime == ts) // capped at publish time: never a future countdown for a bus already gone
     }
 
-    /// The guard on the boundary. A stop below it but whose scheduled time is still in the future must not be
-    /// hidden as departed — a boundary that briefly jumps backward (measured: ~0.25% of trips) would otherwise
-    /// erase a genuinely upcoming departure from the list.
-    @Test func stopBelowBoundaryButStillFutureIsNotHiddenAsDeparted() {
+    /// The guard on the boundary, now only one stop wide. The stop directly below the boundary with a future
+    /// scheduled time must not be hidden as departed — a boundary that briefly jumps backward (measured:
+    /// ~0.25% of trips) would otherwise erase a genuinely upcoming departure from the list.
+    @Test func stopDirectlyBelowBoundaryButStillFutureIsNotHiddenAsDeparted() {
+        let ts = midnight.addingTimeInterval(100)
+        let rows = [departure(seq: 5, offset: 300, base: midnight)] // scheduled +300, after ts
+        let merged = Merge.mergeDepartures(
+            rows, tripID: "T1",
+            frame: frame(
+                predictions: ["T1": [6: Prediction(arrival: midnight.addingTimeInterval(360), departure: nil, delay: nil, scheduleRelationship: .scheduled)]],
+                timestamp: ts
+            )
+        )
+        #expect(merged[0].displayTime > ts) // stays upcoming, not marked departed
+    }
+
+    /// An *early* bus: two or more stops below the boundary, the feed has pruned the stop but its scheduled
+    /// time hasn't come. The route line (same boundary) already shows it passed, so the row must not keep
+    /// counting down — the "line says gone, stop says one minute" contradiction.
+    @Test func earlyBusWellBelowBoundaryReadsAsDeparted() {
         let ts = midnight.addingTimeInterval(100)
         let rows = [departure(seq: 3, offset: 300, base: midnight)] // scheduled +300, after ts
         let merged = Merge.mergeDepartures(
@@ -253,7 +269,7 @@ struct MergeTests {
                 timestamp: ts
             )
         )
-        #expect(merged[0].displayTime > ts) // stays upcoming, not marked departed
+        #expect(merged[0].displayTime <= ts) // departed, not a future countdown
     }
 
     /// A bus recovering: 6 min late at stop 5, 3 min late at stop 10, stop 7 omitted by the feed. The gap
