@@ -30,6 +30,13 @@ struct MapScreen: View {
     @State private var visibleRegion: MKCoordinateRegion?
     @State private var stops: [StopSummary] = []
     @State private var vehicles: [String: LiveVehicle] = [:]
+    /// `filteredVehicles`, memoised. As a computed property read straight from `body` it culled up to ~1000
+    /// vehicles to the viewport on *every* render — and `body` re-renders on a sheet-detent drag and on every
+    /// keystroke in the search field, not just when a frame lands. The bus positions change once per publish.
+    @State private var shownVehicles: [LiveVehicle] = []
+    /// Bumped alongside `shownVehicles`/`tripGhostVehicle`, so the map can skip its own O(vehicles) diff for
+    /// renders that didn't move anything. Same contract as `stopsVersion`.
+    @State private var vehiclesVersion = 0
     @State private var routes: [String: RouteInfo] = [:]
     @State private var lastFrame: RealtimeFrame?
     @State private var flyTo: FlyToCommand?
@@ -99,6 +106,14 @@ struct MapScreen: View {
         return nil
     }
 
+    /// Recomputes the drawn vehicle set and tells the map it changed. Called from the few places that can
+    /// actually change it — a new frame, a pan, the route filters, opening or closing a trip — rather than
+    /// letting `body` recompute it for every unrelated render.
+    private func rebuildShownVehicles() {
+        shownVehicles = filteredVehicles
+        vehiclesVersion &+= 1
+    }
+
     private var filteredVehicles: [LiveVehicle] {
         // Tracking a trip narrows to that one bus, so the route reads clean and nothing else is computed.
         if let selectedTripID {
@@ -151,6 +166,7 @@ struct MapScreen: View {
     /// a computed property it did so on every render rather than only when a new frame moved things.
     private func rebuildTripGhost() {
         tripGhostVehicle = showGhostsOnMap ? interpolatedTripGhost() : nil
+        vehiclesVersion &+= 1 // the ghost is drawn through the same annotation path
     }
 
     private func interpolatedTripGhost() -> LiveVehicle? {
@@ -198,7 +214,8 @@ struct MapScreen: View {
                 stops: displayedStopsWithFavourites,
                 stopsVersion: stopsVersion,
                 favouriteStopIDs: favouriteStopIDs,
-                vehicles: filteredVehicles,
+                vehicles: shownVehicles,
+                vehiclesVersion: vehiclesVersion,
                 ghostVehicles: tripGhostVehicle.map { [$0] } ?? [],
                 routes: routes,
                 userTrackingEnabled: locationManager.authorized,
@@ -209,6 +226,7 @@ struct MapScreen: View {
                 markerScale: markerScale,
                 onRegionChange: { region in
                     visibleRegion = region
+                    rebuildShownVehicles() // the cull is to this viewport
                     Task { await loadStops(in: region) }
                 },
                 onSelectStop: { stop in showStop(stop) },
@@ -272,6 +290,9 @@ struct MapScreen: View {
         .task(id: selectedTripID) { await loadTripContext() }
         .onChange(of: vehicleFix) { _, _ in rebuildTripRouteLines() }
         .onChange(of: showGhostsOnMap) { _, _ in rebuildTripGhost() }
+        // The other inputs to `filteredVehicles`. One `onChange` over an array rather than four, because the
+        // list is only ever read as a whole and `[Bool]` is Equatable for free.
+        .onChange(of: [showAllLiveBuses, hideBus, hideTram, hideTrain]) { _, _ in rebuildShownVehicles() }
         .task {
             let loaded = (try? await store.allRoutes()) ?? [:]
             routes = loaded.mapValues {
@@ -281,12 +302,15 @@ struct MapScreen: View {
                     type: $0.type
                 )
             }
+            // The hide-by-mode filters read `routes`; until this lands they can't classify anything.
+            rebuildShownVehicles()
         }
         .task(id: demand) { await engine.setDemand(demand) }
         .task {
             for await frame in engine.frames {
                 lastFrame = frame
                 vehicles = frame.vehicles
+                rebuildShownVehicles()
                 rebuildTripGhost()
             }
         }
@@ -485,6 +509,7 @@ struct MapScreen: View {
             tripRouteLines = nil
             tripGhostVehicle = nil
             stopsVersion &+= 1
+            rebuildShownVehicles() // closing a trip widens the map back to every bus in the viewport
             return
         }
         let info = try? await store.tripInfo(tripID: tripID)
@@ -493,6 +518,7 @@ struct MapScreen: View {
         tripShapePoints = (try? await store.shape(tripID: tripID)) ?? []
         tripStopTimes = (try? await store.allStopTimes(tripID: tripID)) ?? []
         stopsVersion &+= 1
+        rebuildShownVehicles() // opening a trip narrows the map to that one bus
         rebuildTripRouteLines()
         rebuildTripGhost()
     }

@@ -78,9 +78,18 @@ final class StopDotView: MKAnnotationView {
         layer.shadowRadius = 1.5
         layer.shadowOffset = CGSize(width: 0, height: 1)
         layer.shouldRasterize = true
-        layer.rasterizationScale = traitCollection.displayScale
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    /// Rasterization scale, set where the value is real. `traitCollection.displayScale` is not resolved
+    /// until the view is in a window — at `init` it can be 0, which rasterizes every stop dot on the map at
+    /// a degenerate scale. UIKit's own default of 1.0 is merely blurry, which is the right thing to have in
+    /// the gap.
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        let scale = traitCollection.displayScale
+        if scale > 0, layer.rasterizationScale != scale { layer.rasterizationScale = scale }
+    }
 
     func configure(isFavourite: Bool) {
         // Never the system callout: its bubble is translucent and styled by MapKit, which reads as a
@@ -218,6 +227,11 @@ struct MapViewRepresentable: UIViewRepresentable {
     var stopsVersion: Int = 0
     var favouriteStopIDs: Set<String> = []
     let vehicles: [LiveVehicle]
+    /// Bumped by the owner whenever `vehicles` or `ghostVehicles` is reassigned, exactly like `stopsVersion`.
+    /// `updateUIView` runs on every render — a sheet drag, a keystroke in the search field, a pan tick — and
+    /// `applyVehicles` was hashing every trip ID on the map twice per call to rediscover that nothing had
+    /// changed. The vehicle list only actually moves when the feed publishes.
+    var vehiclesVersion: Int = 0
     /// Schedule-interpolated positions for trips with no live feed, so they don't just vanish off the map.
     var ghostVehicles: [LiveVehicle] = []
     let routes: [String: RouteInfo]
@@ -232,8 +246,14 @@ struct MapViewRepresentable: UIViewRepresentable {
     let onSelectVehicle: (String) -> Void
     /// When set, a stop tap previews the stop rather than opening it — the caller draws its own card and
     /// decides what a second tap does. Nil (the main map) keeps the single tap that goes straight there,
-    /// where there is no trip context worth previewing.
-    var onPreviewStop: ((StopSummary) -> Void)? = nil
+    /// where there is no trip context worth previewing. Called with nil when a tap lands on the bare map,
+    /// which is what dismisses the caller's card.
+    var onPreviewStop: ((StopSummary?) -> Void)? = nil
+    /// The stop the caller is previewing, echoed back as a point in the map view's own coordinate space on
+    /// every region change so the card can sit on top of its pin instead of at the bottom of the screen.
+    /// Nil point = that stop is off screen (or gone), so the caller draws nothing.
+    var previewStopID: String? = nil
+    var onPreviewPoint: ((CGPoint?) -> Void)? = nil
 
     func makeUIView(context: Context) -> MKMapView {
         let map = MKMapView()
@@ -243,13 +263,25 @@ struct MapViewRepresentable: UIViewRepresentable {
         map.register(VehicleMarkerView.self, forAnnotationViewWithReuseIdentifier: "vehicle")
         map.register(StopDotView.self, forAnnotationViewWithReuseIdentifier: "stop")
         map.setRegion(Self.defaultRegion, animated: false)
+        if onPreviewStop != nil {
+            let tap = UITapGestureRecognizer(
+                target: context.coordinator, action: #selector(Coordinator.handleMapTap(_:))
+            )
+            // MapKit's own recognisers must keep working — this one only observes, so that a tap on bare map
+            // dismisses the caller's preview card.
+            tap.delegate = context.coordinator
+            tap.cancelsTouchesInView = false
+            map.addGestureRecognizer(tap)
+        }
         return map
     }
 
     func updateUIView(_ map: MKMapView, context: Context) {
         context.coordinator.parent = self
         context.coordinator.applyStops(stops, version: stopsVersion, favourites: favouriteStopIDs, to: map)
-        context.coordinator.applyVehicles(vehicles, ghosts: ghostVehicles, routes: routes, to: map)
+        context.coordinator.applyVehicles(
+            vehicles, version: vehiclesVersion, ghosts: ghostVehicles, routes: routes, to: map
+        )
         context.coordinator.applyRouteLines(routeLines, to: map)
 
         // Both of these were being reassigned on every SwiftUI render. Reassigning `preferredConfiguration`
@@ -267,6 +299,16 @@ struct MapViewRepresentable: UIViewRepresentable {
             context.coordinator.lastFlyToID = flyToID
             map.setRegion(flyTo, animated: true)
         }
+
+        // A newly previewed stop needs its first point without waiting for a pan. Deferred: this runs inside
+        // SwiftUI's update pass, and the callback writes state.
+        if context.coordinator.lastPreviewStopID != previewStopID {
+            context.coordinator.lastPreviewStopID = previewStopID
+            DispatchQueue.main.async { [weak map] in
+                guard let map else { return }
+                context.coordinator.reportPreviewPoint(map)
+            }
+        }
     }
 
     private static func configuration(for emphasis: String) -> MKMapConfiguration {
@@ -279,18 +321,21 @@ struct MapViewRepresentable: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    final class Coordinator: NSObject, MKMapViewDelegate {
+    final class Coordinator: NSObject, MKMapViewDelegate, UIGestureRecognizerDelegate {
         var parent: MapViewRepresentable
         private var stopAnnotations: [String: StopAnnotation] = [:]
         private var vehicleAnnotations: [String: VehicleAnnotation] = [:]
         private var regionChangeWorkItem: DispatchWorkItem?
         private var routeOverlays: [MKPolyline] = []
         private var lastStopsVersion = -1
+        private var lastVehiclesVersion = -1
         private var lastFavourites: Set<String> = []
         private var lastRouteSignature = ""
         private var lastMarkerScale: CGFloat?
         var lastEmphasis: String?
         var lastFlyToID: UUID?
+        var lastPreviewStopID: String?
+        private var lastReportedPoint: CGPoint?
 
         init(_ parent: MapViewRepresentable) { self.parent = parent }
 
@@ -358,17 +403,27 @@ struct MapViewRepresentable: UIViewRepresentable {
         }
 
         func applyVehicles(
-            _ vehicles: [LiveVehicle], ghosts: [LiveVehicle], routes: [String: RouteInfo], to map: MKMapView
+            _ vehicles: [LiveVehicle], version: Int, ghosts: [LiveVehicle],
+            routes: [String: RouteInfo], to map: MKMapView
         ) {
-            // A trip that just gained a live fix must drop its ghost, so live always wins on tripID. On the
-            // full map there are no ghosts (they belong to the trip sheet), so skip building the live-ID set
-            // over ~1000 vehicles on every render when nothing needs de-duping against it.
             // Marker size is a Settings slider, and it reaches a view only through `configure`. Reconfiguring
             // solely on a vehicle-property change meant dragging the slider did nothing to the buses already
             // on screen — they kept the size they were created at until something else happened to rebuild
             // them, which on a map you're already looking at is never.
             let scaleChanged = parent.markerScale != lastMarkerScale
+            // Version-gated for the same reason `applyStops` is: this runs on every render, and everything
+            // below is O(vehicles) — two full sets of trip IDs hashed and subtracted, then a per-vehicle
+            // dictionary lookup — against up to ~1000 buses. Dragging the sheet detent or typing in the
+            // search field re-renders `MapScreen`, so that was the whole diff, per frame, for a list that
+            // changes once per publish. The scale check stays outside the gate: the slider changes nothing
+            // about the vehicles, only how they are drawn.
+            guard version != lastVehiclesVersion || scaleChanged else { return }
+            lastVehiclesVersion = version
             lastMarkerScale = parent.markerScale
+
+            // A trip that just gained a live fix must drop its ghost, so live always wins on tripID. On the
+            // full map there are no ghosts (they belong to the trip sheet), so skip building the live-ID set
+            // over ~1000 vehicles when nothing needs de-duping against it.
 
             let all: [(LiveVehicle, Bool)]
             if ghosts.isEmpty {
@@ -407,6 +462,46 @@ struct MapViewRepresentable: UIViewRepresentable {
             }
         }
 
+        /// Fires continuously while the map moves, unlike `regionDidChangeAnimated`, so the preview card
+        /// stays glued to its pin through the pan rather than jumping at the end of it.
+        func mapViewDidChangeVisibleRegion(_ mapView: MKMapView) {
+            reportPreviewPoint(mapView)
+        }
+
+        /// Where the previewed stop currently sits in the map view. Nil once it leaves the visible rect — a
+        /// card pinned to an off-screen pin would otherwise sit clamped at the edge pointing at nothing.
+        func reportPreviewPoint(_ map: MKMapView) {
+            guard let report = parent.onPreviewPoint else { return }
+            var point: CGPoint?
+            if let id = parent.previewStopID, let annotation = stopAnnotations[id] {
+                let candidate = map.convert(annotation.coordinate, toPointTo: map)
+                if map.bounds.insetBy(dx: -40, dy: -40).contains(candidate) { point = candidate }
+            }
+            // Every pan tick writes SwiftUI state otherwise, re-rendering the whole sheet for a sub-pixel move.
+            if let point, let last = lastReportedPoint,
+               abs(point.x - last.x) < 0.5, abs(point.y - last.y) < 0.5 { return }
+            if point == nil && lastReportedPoint == nil { return }
+            lastReportedPoint = point
+            report(point)
+        }
+
+        /// A tap on bare map dismisses the caller's preview. Taps that land on an annotation are left alone —
+        /// `didSelect` owns those, and clearing here would race it into dismissing the card it just opened.
+        @objc func handleMapTap(_ recognizer: UITapGestureRecognizer) {
+            guard let map = recognizer.view as? MKMapView, parent.previewStopID != nil else { return }
+            var hit = map.hitTest(recognizer.location(in: map), with: nil)
+            while let view = hit {
+                if view is MKAnnotationView { return }
+                hit = view.superview
+            }
+            parent.onPreviewStop?(nil)
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+        ) -> Bool { true }
+
         func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
             regionChangeWorkItem?.cancel()
             let region = mapView.region
@@ -417,13 +512,20 @@ struct MapViewRepresentable: UIViewRepresentable {
 
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
             if annotation is MKUserLocation { return nil }
+            // `as?`, not `as!`. Both identifiers are registered in `makeUIView`, so the cast holds — but a
+            // forced cast turns any future mismatch (a renamed identifier, a reused map view) into a crash
+            // on the map, where `nil` is a missing pin.
             if let stopAnn = annotation as? StopAnnotation {
-                let view = mapView.dequeueReusableAnnotationView(withIdentifier: "stop", for: stopAnn) as! StopDotView
+                guard let view = mapView.dequeueReusableAnnotationView(
+                    withIdentifier: "stop", for: stopAnn
+                ) as? StopDotView else { return nil }
                 view.configure(isFavourite: stopAnn.isFavourite)
                 return view
             }
             if let vehicleAnn = annotation as? VehicleAnnotation {
-                let view = mapView.dequeueReusableAnnotationView(withIdentifier: "vehicle", for: vehicleAnn) as! VehicleMarkerView
+                guard let view = mapView.dequeueReusableAnnotationView(
+                    withIdentifier: "vehicle", for: vehicleAnn
+                ) as? VehicleMarkerView else { return nil }
                 view.configure(
                     routeShortName: vehicleAnn.routeShortName,
                     color: vehicleAnn.isGhost ? .gray : vehicleAnn.color,
@@ -441,7 +543,6 @@ struct MapViewRepresentable: UIViewRepresentable {
                 mapView.deselectAnnotation(stopAnn, animated: false)
                 if let preview = parent.onPreviewStop { return preview(stopAnn.stop) }
                 parent.onSelectStop(stopAnn.stop)
-                mapView.deselectAnnotation(stopAnn, animated: false)
             } else if let vehicleAnn = view.annotation as? VehicleAnnotation {
                 parent.onSelectVehicle(vehicleAnn.tripID)
                 mapView.deselectAnnotation(vehicleAnn, animated: false)

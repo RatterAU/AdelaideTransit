@@ -189,9 +189,15 @@ struct SettingsScreen: View {
         isCheckingUpdate = true
         updateResultMessage = nil
         do {
-            try await store.refreshIfNeeded(force: true, allowCellular: true)
+            // Say which of the two things happened. "Up to date." was printed either way, so a check that
+            // had just rebuilt the whole timetable reported the same as one that found nothing to do.
+            let outcome = try await store.refreshIfNeeded(force: true, allowCellular: true)
             await loadFeedInfo()
-            updateResultMessage = "Up to date."
+            switch outcome {
+            case .updated: updateResultMessage = "Timetable updated."
+            case .unchanged: updateResultMessage = "Already up to date."
+            case .deferred: updateResultMessage = "Couldn't reach the feed. Try again shortly."
+            }
         } catch {
             updateResultMessage = "Couldn't check: \(error.localizedDescription)"
         }

@@ -9,8 +9,10 @@ struct CSVReader: Sequence, IteratorProtocol {
     let header: [String]
     let columnIndex: [String: Int]
 
-    init(data: Data) {
-        bytes = [UInt8](data)
+    /// Takes the bytes rather than a `Data` to copy: `ZipReader.extract` already hands back exactly this
+    /// buffer, and building a second one doubled the peak on the biggest file in the feed.
+    init(bytes: [UInt8]) {
+        self.bytes = bytes
         var i = 0
         header = Self.readRow(bytes, &i) ?? []
         index = i
@@ -28,42 +30,73 @@ struct CSVReader: Sequence, IteratorProtocol {
         return row[i]
     }
 
+    /// Reads one record.
+    ///
+    /// An unquoted field — which is very nearly all of them — is returned as a slice of the input, so it
+    /// costs one `String` allocation and nothing else. The previous version appended *every byte of the
+    /// file* to a scratch array on its way past: about 80 million single-byte appends for `stop_times.txt`
+    /// alone, on the slowest thing the app does. The scratch buffer survives for quoted fields only, where
+    /// doubled `""` means the bytes on disk aren't the bytes in the value.
     private static func readRow(_ bytes: [UInt8], _ index: inout Int) -> [String]? {
         guard index < bytes.count else { return nil }
         var fields: [String] = []
-        var field: [UInt8] = []
+        var fieldStart = index
+        var escaped: [UInt8] = []
+        var isEscaped = false
         var inQuotes = false
+
+        func finish(_ end: Int) -> String {
+            isEscaped ? String(decoding: escaped, as: UTF8.self)
+                      : String(decoding: bytes[fieldStart..<end], as: UTF8.self)
+        }
+        func startNextField() {
+            fieldStart = index
+            escaped.removeAll(keepingCapacity: true)
+            isEscaped = false
+        }
+
         while index < bytes.count {
             let b = bytes[index]
             if inQuotes {
                 if b == 0x22 {
                     if index + 1 < bytes.count, bytes[index + 1] == 0x22 {
-                        field.append(0x22); index += 2
+                        escaped.append(0x22); index += 2
                     } else {
                         inQuotes = false; index += 1
                     }
                 } else {
-                    field.append(b); index += 1
+                    escaped.append(b); index += 1
                 }
                 continue
             }
             switch b {
-            case 0x22: inQuotes = true; index += 1
+            case 0x22:
+                // Quoting starts: this field's value is no longer the bytes on disk, so it accumulates.
+                inQuotes = true
+                isEscaped = true
+                index += 1
             case 0x2C:
-                fields.append(String(decoding: field, as: UTF8.self))
-                field.removeAll(keepingCapacity: true)
+                fields.append(finish(index))
                 index += 1
+                startNextField()
             case 0x0D:
+                // CRLF: the field ends before the CR, and the LF goes with it.
+                let end = index
                 index += 1
+                if index < bytes.count, bytes[index] == 0x0A { index += 1 }
+                fields.append(finish(end))
+                return fields
             case 0x0A:
+                let end = index
                 index += 1
-                fields.append(String(decoding: field, as: UTF8.self))
+                fields.append(finish(end))
                 return fields
             default:
-                field.append(b); index += 1
+                if isEscaped { escaped.append(b) }
+                index += 1
             }
         }
-        fields.append(String(decoding: field, as: UTF8.self))
+        fields.append(finish(index))
         return fields
     }
 }
@@ -121,6 +154,11 @@ enum GTFSIngest {
 
     /// Streaming ingest of one static GTFS zip into a fresh database file.
     /// Runs off-main; caller is responsible for atomically swapping the file in afterward.
+    ///
+    /// Every keyed table inserts `OR REPLACE`. A feed that repeats a `stop_id`, `route_id`, `trip_id` or
+    /// `service_id` — which real GTFS exports do — would otherwise raise a primary-key violation out of
+    /// here and fail the *whole* rebuild, so one duplicated row upstream would mean the app never took
+    /// another timetable update. Last row wins; the alternative is no timetable at all.
     static func ingest(zipURL: URL, intoDatabaseAt dbURL: URL, meta: FeedMetadata) throws {
         // Sidecars too: deleting only the database leaves the previous attempt's `-wal`/`-shm` beside the
         // new file, where SQLite tries to associate them with it.
@@ -158,42 +196,45 @@ enum GTFSIngest {
                             arguments: [ISO8601DateFormatter().string(from: Date())])
         }
 
-        try verify(dbQueue)
+        // No row-count check here. There used to be one ("more than 100 stops"), but the only caller is
+        // `GTFSStore.installFeed`, which validates this same file against thresholds an order of magnitude
+        // stricter before it is allowed to replace anything. Two floors for one decision meant the weaker
+        // one could only ever produce a different error message for a feed the stronger one also refused.
+        //
         // Close explicitly rather than leaving it to deinit. The caller validates this file, moves it, and
         // deletes its sidecars; any fd still open when that happens is an unlinked-vnode-in-use violation,
         // which SQLite reports on the *next* access as a bare "disk I/O error" (code 10).
         try? dbQueue.close()
     }
 
-    private static func verify(_ dbQueue: DatabaseQueue) throws {
-        let stopCount = try dbQueue.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM stops") } ?? 0
-        guard stopCount > 100 else {
-            throw NSError(domain: "GTFSIngest", code: 1, userInfo: [NSLocalizedDescriptionKey: "Ingest verification failed: only \(stopCount) stops"])
-        }
-    }
-
     // MARK: - Per-table ingest
 
     private static func ingestStops(_ zip: ZipReader, _ dbQueue: DatabaseQueue) throws {
-        var csv = CSVReader(data: try zip.extract("stops.txt"))
+        var csv = CSVReader(bytes: try zip.extract("stops.txt"))
         try dbQueue.write { db in
-            let stmt = try db.makeStatement(sql: "INSERT INTO stops(id, code, name, lat, lon) VALUES (?, ?, ?, ?, ?)")
-            let rtreeStmt = try db.makeStatement(sql: "INSERT INTO stops_rtree(id, min_lat, max_lat, min_lon, max_lon) VALUES (?, ?, ?, ?, ?)")
+            let stmt = try db.makeStatement(sql: "INSERT OR REPLACE INTO stops(id, code, name, lat, lon) VALUES (?, ?, ?, ?, ?)")
+            let rtreeStmt = try db.makeStatement(sql: "INSERT OR REPLACE INTO stops_rtree(id, min_lat, max_lat, min_lon, max_lon) VALUES (?, ?, ?, ?, ?)")
             while let row = csv.next() {
                 let id = csv[row, "stop_id"]
                 guard !id.isEmpty else { continue }
                 let lat = Double(csv[row, "stop_lat"]) ?? 0
                 let lon = Double(csv[row, "stop_lon"]) ?? 0
                 try stmt.execute(arguments: [id, csv[row, "stop_code"], csv[row, "stop_name"], lat, lon])
+                // An r-tree's first column is a strict INTEGER primary key. Every Adelaide `stop_id` is
+                // numeric today, but a single non-numeric one would make this INSERT a datatype mismatch,
+                // thrown straight out of `ingest` — so one odd stop wouldn't cost you that stop, it would
+                // fail *every* timetable update from then on. Skipping it costs only its map pin: the stop
+                // is already in `stops`, so its departures, its favourite and its trips all still work.
+                guard Int64(id) != nil else { continue }
                 try rtreeStmt.execute(arguments: [id, lat, lat, lon, lon])
             }
         }
     }
 
     private static func ingestRoutes(_ zip: ZipReader, _ dbQueue: DatabaseQueue) throws {
-        var csv = CSVReader(data: try zip.extract("routes.txt"))
+        var csv = CSVReader(bytes: try zip.extract("routes.txt"))
         try dbQueue.write { db in
-            let stmt = try db.makeStatement(sql: "INSERT INTO routes(id, short_name, long_name, type, color) VALUES (?, ?, ?, ?, ?)")
+            let stmt = try db.makeStatement(sql: "INSERT OR REPLACE INTO routes(id, short_name, long_name, type, color) VALUES (?, ?, ?, ?, ?)")
             while let row = csv.next() {
                 let id = csv[row, "route_id"]
                 guard !id.isEmpty else { continue }
@@ -206,9 +247,9 @@ enum GTFSIngest {
     }
 
     private static func ingestTrips(_ zip: ZipReader, _ dbQueue: DatabaseQueue) throws {
-        var csv = CSVReader(data: try zip.extract("trips.txt"))
+        var csv = CSVReader(bytes: try zip.extract("trips.txt"))
         try dbQueue.write { db in
-            let stmt = try db.makeStatement(sql: "INSERT INTO trips(id, route_id, service_id, headsign, direction, shape_id, block_id) VALUES (?, ?, ?, ?, ?, ?, ?)")
+            let stmt = try db.makeStatement(sql: "INSERT OR REPLACE INTO trips(id, route_id, service_id, headsign, direction, shape_id, block_id) VALUES (?, ?, ?, ?, ?, ?, ?)")
             while let row = csv.next() {
                 let id = csv[row, "trip_id"]
                 guard !id.isEmpty else { continue }
@@ -224,15 +265,18 @@ enum GTFSIngest {
     }
 
     private static func ingestStopTimes(_ zip: ZipReader, _ dbQueue: DatabaseQueue) throws {
-        var csv = CSVReader(data: try zip.extract("stop_times.txt"))
+        var csv = CSVReader(bytes: try zip.extract("stop_times.txt"))
         try dbQueue.write { db in
             let stmt = try db.makeStatement(sql: "INSERT INTO stop_times(trip_id, seq, stop_id, arr, dep) VALUES (?, ?, ?, ?, ?)")
             while let row = csv.next() {
                 let tripID = csv[row, "trip_id"]
                 guard !tripID.isEmpty else { continue }
+                // GTFS allows either time to be blank at a non-timepoint stop, and each stands in for the
+                // other. Only `departure_time` had a fallback, so a row with a blank `arrival_time` was
+                // dropped outright — taking the stop off that trip's list *and* off that stop's departures.
                 let arr = GTFSTime.seconds(csv[row, "arrival_time"])
-                let dep = GTFSTime.seconds(csv[row, "departure_time"]) ?? arr
-                guard let arrival = arr, let departure = dep else { continue }
+                let dep = GTFSTime.seconds(csv[row, "departure_time"])
+                guard let arrival = arr ?? dep, let departure = dep ?? arr else { continue }
                 try stmt.execute(arguments: [
                     tripID, Int(csv[row, "stop_sequence"]) ?? 0, csv[row, "stop_id"], arrival, departure
                 ])
@@ -241,8 +285,8 @@ enum GTFSIngest {
     }
 
     private static func ingestShapes(_ zip: ZipReader, _ dbQueue: DatabaseQueue) throws {
-        guard let data = try? zip.extract("shapes.txt") else { return }
-        var csv = CSVReader(data: data)
+        guard let bytes = try? zip.extract("shapes.txt") else { return }
+        var csv = CSVReader(bytes: bytes)
         try dbQueue.write { db in
             let stmt = try db.makeStatement(sql: "INSERT INTO shapes(shape_id, seq, lat, lon, dist) VALUES (?, ?, ?, ?, ?)")
             while let row = csv.next() {
@@ -259,11 +303,11 @@ enum GTFSIngest {
     }
 
     private static func ingestCalendar(_ zip: ZipReader, _ dbQueue: DatabaseQueue) throws {
-        guard let data = try? zip.extract("calendar.txt") else { return }
-        var csv = CSVReader(data: data)
+        guard let bytes = try? zip.extract("calendar.txt") else { return }
+        var csv = CSVReader(bytes: bytes)
         try dbQueue.write { db in
             let stmt = try db.makeStatement(sql: """
-                INSERT INTO calendar(service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+                INSERT OR REPLACE INTO calendar(service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """)
             while let row = csv.next() {
@@ -280,8 +324,8 @@ enum GTFSIngest {
     }
 
     private static func ingestCalendarDates(_ zip: ZipReader, _ dbQueue: DatabaseQueue) throws {
-        guard let data = try? zip.extract("calendar_dates.txt") else { return }
-        var csv = CSVReader(data: data)
+        guard let bytes = try? zip.extract("calendar_dates.txt") else { return }
+        var csv = CSVReader(bytes: bytes)
         try dbQueue.write { db in
             let stmt = try db.makeStatement(sql: "INSERT INTO calendar_dates(service_id, date, exception_type) VALUES (?, ?, ?)")
             while let row = csv.next() {

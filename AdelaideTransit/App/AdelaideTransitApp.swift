@@ -8,7 +8,8 @@ private struct GTFSStoreKey: EnvironmentKey {
     static let defaultValue = GTFSStore.shared
 }
 private struct RealtimeEngineKey: EnvironmentKey {
-    static let defaultValue = RealtimeEngine()
+    /// The *same* actor the app injects below, not a second one — see `RealtimeEngine.shared`.
+    static let defaultValue = RealtimeEngine.shared
 }
 extension EnvironmentValues {
     var gtfsStore: GTFSStore {
@@ -60,7 +61,7 @@ final class AppBootstrap {
 @main
 struct AdelaideTransitApp: App {
     @State private var store = GTFSStore.shared
-    @State private var engine = RealtimeEngine()
+    @State private var engine = RealtimeEngine.shared
     @State private var bootstrap = AppBootstrap()
     @Environment(\.scenePhase) private var scenePhase
 
@@ -104,7 +105,7 @@ struct AdelaideTransitApp: App {
         let operation = Task {
             // The app's own store, not a second one on the same files — see `GTFSStore.shared`.
             let allowCellular = UserDefaults.standard.bool(forKey: "allowCellularUpdates")
-            try? await GTFSStore.shared.refreshIfNeeded(allowCellular: allowCellular)
+            _ = try? await GTFSStore.shared.refreshIfNeeded(allowCellular: allowCellular)
             task.setTaskCompleted(success: true)
         }
         task.expirationHandler = { operation.cancel() }
@@ -123,16 +124,16 @@ struct AdelaideTransitApp: App {
         let today = AdelaideTZ.yyyymmdd(.now)
         let defaults = UserDefaults.standard
         guard defaults.string(forKey: lastRefreshCheckDayKey) != today else { return }
-        defaults.set(today, forKey: lastRefreshCheckDayKey)
 
         Task.detached(priority: .utility) {
             let allowCellular = defaults.bool(forKey: "allowCellularUpdates")
-            do {
-                try await store.refreshIfNeeded(allowCellular: allowCellular)
-            } catch {
-                // Leave the day unmarked so the next open retries rather than skipping until tomorrow.
-                defaults.removeObject(forKey: lastRefreshCheckDayKey)
-            }
+            // The day is marked only once the server has actually answered. Marking up front and clearing it
+            // on `throw` covered the loud failures but not the quiet ones: a failed `HEAD` probe and an
+            // update waiting for Wi-Fi both return normally, so one flaky moment — or simply launching on
+            // cellular — recorded the day as checked and skipped the timetable until tomorrow.
+            guard let outcome = try? await store.refreshIfNeeded(allowCellular: allowCellular),
+                  outcome != .deferred else { return }
+            defaults.set(today, forKey: lastRefreshCheckDayKey)
         }
     }
 }

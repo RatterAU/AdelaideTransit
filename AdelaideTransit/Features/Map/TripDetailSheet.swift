@@ -24,6 +24,8 @@ struct TripDetailSheet: View {
     @State private var ghostVehicle: LiveVehicle?
     /// Stop tapped on the mini map, previewed before it opens.
     @State private var previewStop: StopSummary?
+    /// Where that stop's pin currently is inside the mini map, reported by the map view on every region change.
+    @State private var previewPoint: CGPoint?
     @State private var blockmateIDs: [String] = []
     @State private var routeLines: RouteLines?
     @State private var continuation: (
@@ -67,7 +69,7 @@ struct TripDetailSheet: View {
         guard let info, let serviceDate else { return [] }
         let departures = stopTimes.map { st in
             Departure(
-                tripID: tripID, stopSequence: st.seq, routeID: info.routeID,
+                tripID: tripID, stopSequence: st.seq, stopID: st.stopID, routeID: info.routeID,
                 routeShortName: info.shortName, routeColor: info.color, headsign: st.name,
                 direction: nil, scheduledTime: serviceDate.addingTimeInterval(TimeInterval(st.dep)),
                 liveTime: nil, state: .scheduled
@@ -86,7 +88,7 @@ struct TripDetailSheet: View {
         guard let continuation, let serviceDate, !continuationStopTimes.isEmpty else { return [] }
         let departures = continuationStopTimes.map { st in
             Departure(
-                tripID: continuation.tripID, stopSequence: st.seq, routeID: continuation.routeID,
+                tripID: continuation.tripID, stopSequence: st.seq, stopID: st.stopID, routeID: continuation.routeID,
                 routeShortName: continuation.shortName, routeColor: continuation.color, headsign: st.name,
                 direction: nil, scheduledTime: serviceDate.addingTimeInterval(TimeInterval(st.dep)),
                 liveTime: nil, state: .scheduled
@@ -111,7 +113,7 @@ struct TripDetailSheet: View {
     /// hid your own stop whenever the bus hadn't reached it yet, which is precisely when you're looking.
     private var upcomingStops: [Departure] {
         let cutoff: Int?
-        if let busSeq = Merge.busStopSequence(tripID: tripID, frame: frame) {
+        if let busSeq = Merge.busStopSequence(tripID: tripID, frame: frame, among: mergedStops) {
             cutoff = min(busSeq, originSequence ?? busSeq)
         } else if let originSequence {
             cutoff = originSequence
@@ -280,12 +282,35 @@ struct TripDetailSheet: View {
             onSelectVehicle: { _ in },
             // Tapping a stop on the route answers "when does *this* bus get here" first; opening the stop is
             // the second tap, on the card.
-            onPreviewStop: { stop in withAnimation(.snappy) { previewStop = stop } }
+            onPreviewStop: { stop in withAnimation(.snappy) { previewStop = stop } },
+            previewStopID: previewStop?.id,
+            onPreviewPoint: { previewPoint = $0 }
         )
-        .overlay(alignment: .bottom) {
-            if let previewStop { stopPreviewCard(previewStop) }
+        .overlay {
+            // Anchored over the pin, not parked at the bottom edge: the card is about *that* stop, and at the
+            // bottom nothing said which one. A zero-size anchor at the pin with the card overlaid bottom-aligned
+            // puts the card entirely above it; x is clamped so a pin near either edge still shows a whole card.
+            if let previewStop, let previewPoint {
+                GeometryReader { geo in
+                    Color.clear
+                        .frame(width: 1, height: 1)
+                        .overlay(alignment: .bottom) {
+                            stopPreviewCard(previewStop).frame(width: Self.previewCardWidth)
+                        }
+                        .position(
+                            x: min(
+                                max(previewPoint.x, Self.previewCardWidth / 2 + 8),
+                                max(geo.size.width - Self.previewCardWidth / 2 - 8, Self.previewCardWidth / 2 + 8)
+                            ),
+                            // Above the pin, and never so high the card runs off the top of the map.
+                            y: max(previewPoint.y - 14, 96)
+                        )
+                }
+            }
         }
     }
+
+    private static let previewCardWidth: CGFloat = 260
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -316,8 +341,11 @@ struct TripDetailSheet: View {
                     .foregroundStyle(trackingState.tint)
                 // Against your own stop, not the head of the route — "4 stops away" answers the question
                 // a countdown can't when you can see the traffic it's sitting in.
-                if let busSeq = Merge.busStopSequence(tripID: tripID, frame: frame), let origin = originSequence,
-                   let text = stopsAwayText(origin - busSeq) {
+                // Counted over the stops the feed still lists, not subtracted from sequence numbers: static
+                // sequences skip numbers on effectively every trip, so the subtraction overstated the gap.
+                if let origin = mergedStops.first(where: { $0.stopSequence == originSequence }),
+                   let away = Merge.stopsAway(for: origin, frame: frame),
+                   let text = stopsAwayText(away) {
                     Text("· \(text)").font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -466,13 +494,12 @@ struct TripDetailSheet: View {
         .background(.background, in: RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
         .shadow(radius: 8, y: 2)
-        .padding(12)
         .contentShape(Rectangle())
         .onTapGesture {
             previewStop = nil
             onSelectStop(stop)
         }
-        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .transition(.scale(scale: 0.9, anchor: .bottom).combined(with: .opacity))
     }
 
     private func stopID(for dep: Departure) -> String {

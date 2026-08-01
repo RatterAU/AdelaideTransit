@@ -110,8 +110,7 @@ struct StopSheet: View {
     /// How many stops back down the route the bus currently is, from the feed's pruning boundary — this feed
     /// publishes no `current_stop_sequence`, so the smallest still-published stop is the bus's position.
     private func stopsAway(for departure: Departure) -> Int? {
-        guard let seq = Merge.busStopSequence(tripID: departure.tripID, frame: frame) else { return nil }
-        return departure.stopSequence - seq
+        Merge.stopsAway(for: departure, frame: frame)
     }
 
     private var header: some View {

@@ -106,8 +106,9 @@ struct FavouritesScreen: View {
         // Drop what has already gone. The rows are fetched once and merged against every frame, so without
         // this a favourite kept showing the three buses it was showing five minutes ago — and `minutesText`
         // clamps a negative countdown to "now", so they read as three buses about to leave.
-        // A minute of grace: the one that left seconds ago is still the one you might catch.
-        let cutoff = Date.now.addingTimeInterval(-60)
+        // No grace period: `StopSheet.split` boundaries on `now` exactly, and a minute of slack here meant the
+        // preview's first row was a bus the stop's own list filed under "earlier departures".
+        let cutoff = Date.now
         return Dictionary(grouping: filtered, by: \.tripID)
             .flatMap { tripID, group in Merge.mergeDepartures(group, tripID: tripID, frame: lastFrame) }
             .filter { $0.displayTime >= cutoff }

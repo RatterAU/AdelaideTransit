@@ -52,6 +52,15 @@ enum ScreenDemand: Equatable {
 /// Polls only what the visible screen needs, at the interval that screen needs it (§2.2, §4).
 /// Raw protobuf never leaves this actor — everything is converted to small Sendable structs on arrival.
 actor RealtimeEngine {
+    /// One engine per process, for the same reason `GTFSStore.shared` is one store.
+    ///
+    /// The environment key's default value and the app's `@State` were two separate `RealtimeEngine()`
+    /// calls, so anything rendered before the injection lands — or any view that loses the environment —
+    /// gets a *second* actor that starts its own three poll loops against the same three feeds. Two full
+    /// uncompressed downloads per publish cycle for data the other one already has, with neither able to
+    /// see the other's demand, backoff or learned cadence.
+    static let shared = RealtimeEngine()
+
     private(set) var vehicles: [String: LiveVehicle] = [:]
     private(set) var predictions: [String: [UInt32: Prediction]] = [:]
     private(set) var cancelledTripIDs: Set<String> = []
@@ -115,6 +124,9 @@ actor RealtimeEngine {
     private var pathConstrained = false
     /// Consecutive failed fetches per feed, so an outage backs off instead of retrying every 3s forever.
     private var failures: [Feed: Int] = [:]
+    /// When each feed is next allowed to hit the network. Survives a loop restart, which the backoff
+    /// otherwise didn't — see `loop`.
+    private var nextAttempt: [Feed: Date] = [:]
 
     private enum Endpoint {
         static let tripUpdates = URL(string: "https://gtfs.adelaidemetro.com.au/v1/realtime/trip_updates")!
@@ -277,9 +289,22 @@ actor RealtimeEngine {
                     continue
                 }
             }
+            // The same wait, for the backoff an outage has earned. `lastHeaderDate` can't cover this: during
+            // an outage there may never have been a header, and the poll-on-entry above is unconditional. So
+            // a network that flaps — which is when the endpoint is unreachable in the first place — restarted
+            // the loops through `setPath` and had all three feeds hammer a dead server, over and over,
+            // discarding the backoff each time it was about to take effect.
+            if let earliest = nextAttempt[feed], earliest.timeIntervalSinceNow > 0.5 {
+                try? await Task.sleep(for: .seconds(earliest.timeIntervalSinceNow))
+                continue
+            }
             let gotNewData = await poll(feed)
-            let delay = nextDelay(for: feed, multiplier: multiplier, gotNewData: gotNewData)
-            try? await Task.sleep(for: .seconds(max(delay, Self.backoff(failures: failures[feed] ?? 0))))
+            let delay = max(
+                nextDelay(for: feed, multiplier: multiplier, gotNewData: gotNewData),
+                Self.backoff(failures: failures[feed] ?? 0)
+            )
+            nextAttempt[feed] = Date().addingTimeInterval(delay)
+            try? await Task.sleep(for: .seconds(delay))
         }
     }
 
@@ -373,6 +398,7 @@ actor RealtimeEngine {
                     : stu.hasDeparture && stu.departure.hasDelay ? TimeInterval(stu.departure.delay)
                     : nil
                 byStop[stu.stopSequence] = Prediction(
+                    stopID: stu.stopID,
                     arrival: stu.hasArrival && stu.arrival.hasTime ? Date(timeIntervalSince1970: TimeInterval(stu.arrival.time)) : nil,
                     departure: stu.hasDeparture && stu.departure.hasTime ? Date(timeIntervalSince1970: TimeInterval(stu.departure.time)) : nil,
                     delay: delay,

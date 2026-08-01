@@ -16,6 +16,10 @@ struct Departure: Identifiable, Equatable {
     var id: String { "\(tripID)#\(stopSequence)" }
     let tripID: String
     let stopSequence: Int
+    /// Which stop this row is at. Load-bearing for the merge: this feed's trip_updates disagree with the
+    /// static `stop_sequence` on ~5% of trips (whole-trip off-by-one shifts), so `stop_id` — always present,
+    /// always resolvable within the trip — is the only key that reliably lines a prediction up with its stop.
+    let stopID: String
     let routeID: String
     let routeShortName: String
     let routeColor: String?

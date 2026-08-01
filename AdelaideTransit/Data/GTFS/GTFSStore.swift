@@ -1,6 +1,7 @@
 import Foundation
 import GRDB
 import Network
+import os
 
 enum AdelaideTZ {
     static let timeZone = TimeZone(identifier: "Australia/Adelaide")!
@@ -45,11 +46,17 @@ actor GTFSStore {
         FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID)
             ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
-    static var dbURL: URL { containerDirectory.appendingPathComponent("network.sqlite") }
+
+    /// Where this store's four files live. An instance property rather than a hardcoded static so a test can
+    /// point a whole store at a temp directory and drive ingest → validate → swap → query for real, against
+    /// the same code the app runs. The app itself never passes it and always gets the app-group container.
+    let directory: URL
+
+    nonisolated var dbURL: URL { directory.appendingPathComponent("network.sqlite") }
     /// Deliberately a separate file from `network.sqlite`, which ingest replaces wholesale.
-    static var userDBURL: URL { containerDirectory.appendingPathComponent("user.sqlite") }
-    static var stagingDBURL: URL { containerDirectory.appendingPathComponent("network-new.sqlite") }
-    static var stagingZipURL: URL { containerDirectory.appendingPathComponent("download.zip") }
+    nonisolated var userDBURL: URL { directory.appendingPathComponent("user.sqlite") }
+    nonisolated var stagingDBURL: URL { directory.appendingPathComponent("network-new.sqlite") }
+    nonisolated var stagingZipURL: URL { directory.appendingPathComponent("download.zip") }
 
     private var dbQueue: DatabaseQueue?
     /// User-owned data, in its own file. Opened lazily and independently of the timetable: favourites must
@@ -63,12 +70,13 @@ actor GTFSStore {
     /// True once a static feed has been ingested at least once (post first-launch).
     var isReady: Bool { dbQueue != nil }
 
-    init() {
-        dbQueue = try? Self.openDatabase()
+    init(directory: URL = GTFSStore.containerDirectory) {
+        self.directory = directory
+        dbQueue = try? Self.openDatabase(at: directory.appendingPathComponent("network.sqlite"))
     }
 
     private func open() throws {
-        dbQueue = try Self.openDatabase()
+        dbQueue = try Self.openDatabase(at: dbURL)
     }
 
     /// Opens the database **and migrates it**.
@@ -79,7 +87,7 @@ actor GTFSStore {
     /// device still on a v1 file failed every thinned map query outright —
     /// `no such column: s.importance` — which `loadStops`' `try?` swallowed into "no stops today".
     /// Migrating on open is the only thing that reaches an already-installed database.
-    private static func openDatabase() throws -> DatabaseQueue? {
+    private static func openDatabase(at dbURL: URL) throws -> DatabaseQueue? {
         guard FileManager.default.fileExists(atPath: dbURL.path) else { return nil }
         var config = Configuration()
         config.readonly = false
@@ -118,9 +126,33 @@ actor GTFSStore {
 
     // MARK: - Refresh lifecycle (§2.1)
 
+    /// What a refresh attempt actually did. The caller has to be able to tell "asked, nothing new" from
+    /// "never got to ask" — the daily check records the day as done on the first and must not on the second,
+    /// or one failed `HEAD` costs a whole day's timetable currency.
+    enum RefreshOutcome: Sendable {
+        /// The server was asked and the feed identity matched.
+        case unchanged
+        /// A new feed was downloaded, validated and swapped in.
+        case updated
+        /// Nothing was concluded: the probe failed, an update is waiting for Wi-Fi, or another refresh of
+        /// this store is already running.
+        case deferred
+    }
+
+    /// Guards against two refreshes of the same store overlapping. `dailyRefreshCheck` fires from both the
+    /// initial `.task` and `onChange(scenePhase)`, and the day marker is now only written on success — so
+    /// backgrounding and returning mid-download used to be able to start a second 19.7 MB download of the
+    /// feed the first one was already fetching.
+    private var refreshInFlight = false
+
     /// First-launch or update-check entry point. Safe to call anytime; cheap when unchanged.
     /// `allowCellular` gates only *automatic* re-ingest — first launch and a manual "Check now" (force) always proceed.
-    func refreshIfNeeded(force: Bool = false, allowCellular: Bool = false) async throws {
+    @discardableResult
+    func refreshIfNeeded(force: Bool = false, allowCellular: Bool = false) async throws -> RefreshOutcome {
+        guard !refreshInFlight else { return .deferred }
+        refreshInFlight = true
+        defer { refreshInFlight = false }
+
         let storedMeta = try storedFeedMetadata()
         let firstLaunch = !isReady
 
@@ -140,56 +172,84 @@ actor GTFSStore {
             changed = true
             newMeta = probe?.meta ?? storedMeta
         } else {
-            guard let probe else { return } // couldn't ask; try again next time rather than re-ingest blind
+            // Couldn't ask; try again next time rather than re-ingest blind.
+            guard let probe else { return .deferred }
             (changed, newMeta) = probe
         }
-        guard changed else { return }
+        guard changed else { return .unchanged }
 
         if !firstLaunch && !force && !allowCellular {
-            guard await currentPathIsWiFiOrWired() else { return }
+            guard await currentPathIsWiFiOrWired() else { return .deferred }
         }
 
-        let downloadedMeta = try await GTFSIngest.downloadZip(to: Self.stagingZipURL)
+        // Removed however this exits. It used to be deleted only on the success path, so an ingest that threw
+        // — a truncated archive, a full disk, a background task killed mid-parse — left 19.7 MB sitting in the
+        // app group container until some later ingest happened to get far enough to overwrite it.
+        defer { try? FileManager.default.removeItem(at: stagingZipURL) }
+        let downloadedMeta = try await GTFSIngest.downloadZip(to: stagingZipURL)
         // A probe that failed (or a server that answers `HEAD` with nothing) leaves us about to record an
         // identity of nil against a database we did rebuild — which is what makes every later check see
         // "changed" and rebuild again. The download's own response carries the same headers; use them.
         if newMeta.etag == nil && newMeta.lastModified == nil {
             newMeta = downloadedMeta
         }
+        try await installFeed(fromZipAt: stagingZipURL, meta: newMeta)
+        return .updated
+    }
+
+    /// Build a database from a feed archive, check it is plausible, and make it the live one.
+    ///
+    /// Split from `refreshIfNeeded` at the seam where the network ends and the filesystem begins. Everything
+    /// above it is HTTP; everything here is the part with irreversible consequences, and it is the part a
+    /// test can drive with a local archive instead of a 19.7 MB download.
+    func installFeed(
+        fromZipAt zipURL: URL, meta: GTFSIngest.FeedMetadata, floors: FeedFloors = .production
+    ) async throws {
         // Off the actor. `ingest` is synchronous and runs for tens of seconds — parsing 1.16M stop_times and
         // writing them — and called directly it held this actor's executor for all of it, so every query the
         // UI made was queued behind the rebuild. It touches only the staging file, which nothing else has
         // opened, so there is nothing here to serialise against.
-        let (zipURL, stagingURL) = (Self.stagingZipURL, Self.stagingDBURL)
+        let stagingURL = stagingDBURL
         try await Task.detached(priority: .utility) {
-            try GTFSIngest.ingest(zipURL: zipURL, intoDatabaseAt: stagingURL, meta: newMeta)
+            try GTFSIngest.ingest(zipURL: zipURL, intoDatabaseAt: stagingURL, meta: meta)
         }.value
-        try? FileManager.default.removeItem(at: Self.stagingZipURL)
 
-        try validateStagedDatabase()
+        try validateStagedDatabase(floors)
         try swapInStagedDatabase()
     }
 
     struct StagedFeedRejected: Error { let detail: String }
+
+    /// Row counts a staged feed must reach before it is allowed to replace the live timetable.
+    ///
+    /// An order of magnitude below the real feed (9171 stops, 31379 trips, ~1.16M stop times): loose enough
+    /// to survive Adelaide Metro genuinely shrinking the network, tight enough that a truncated download —
+    /// which is still perfectly valid SQLite — cannot get through. A parameter only so a test can install a
+    /// six-stop fixture and still exercise the rejection path against the real numbers.
+    struct FeedFloors: Sendable {
+        var stops = 1_000
+        var trips = 1_000
+        var stopTimes = 100_000
+        static let production = FeedFloors()
+    }
 
     /// Refuse to swap in a database that cannot be a real Adelaide timetable.
     ///
     /// The swap is irreversible from the app's point of view — the previous timetable is gone and the next
     /// check will see the new feed identity as current, so a bad file would persist until Adelaide Metro
     /// published again. A truncated download or a partially-written zip is exactly the sort of thing that
-    /// produces a technically-valid SQLite file with almost nothing in it. Thresholds are an order of
-    /// magnitude below the real feed (9171 stops, 31379 trips, ~1.16M stop times): loose enough to survive
-    /// a genuine network shrinking, tight enough that an empty or truncated build cannot get through.
-    private func validateStagedDatabase() throws {
-        let staged = try DatabaseQueue(path: Self.stagingDBURL.path)
+    /// produces a technically-valid SQLite file with almost nothing in it. See `FeedFloors` for the numbers.
+    private func validateStagedDatabase(_ floors: FeedFloors) throws {
+        let staged = try DatabaseQueue(path: stagingDBURL.path)
         let counts = try staged.read { db in
             (stops: try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM stops") ?? 0,
              trips: try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM trips") ?? 0,
              stopTimes: try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM stop_times") ?? 0)
         }
         try? staged.close() // see GTFSIngest.ingest — the file is moved and its sidecars deleted right after
-        guard counts.stops >= 1_000, counts.trips >= 1_000, counts.stopTimes >= 100_000 else {
-            try? FileManager.default.removeItem(at: Self.stagingDBURL)
+        guard counts.stops >= floors.stops, counts.trips >= floors.trips,
+              counts.stopTimes >= floors.stopTimes else {
+            try? FileManager.default.removeItem(at: stagingDBURL)
             throw StagedFeedRejected(
                 detail: "stops \(counts.stops), trips \(counts.trips), stop_times \(counts.stopTimes)"
             )
@@ -209,16 +269,16 @@ actor GTFSStore {
         // full disk — left the device with *no* database at all: no stops, no favourites, and the app
         // back at its first-launch download screen. The window was small, but the cost of losing it was
         // total, and a rename is free.
-        let previous = Self.dbURL.appendingPathExtension("previous")
+        let previous = dbURL.appendingPathExtension("previous")
         try? fm.removeItem(at: previous)
-        let hadPrevious = fm.fileExists(atPath: Self.dbURL.path)
+        let hadPrevious = fm.fileExists(atPath: dbURL.path)
         if hadPrevious {
-            try fm.moveItem(at: Self.dbURL, to: previous)
+            try fm.moveItem(at: dbURL, to: previous)
         }
         do {
-            try fm.moveItem(at: Self.stagingDBURL, to: Self.dbURL)
+            try fm.moveItem(at: stagingDBURL, to: dbURL)
         } catch {
-            if hadPrevious { try? fm.moveItem(at: previous, to: Self.dbURL) }
+            if hadPrevious { try? fm.moveItem(at: previous, to: dbURL) }
             try? open()
             throw error
         }
@@ -229,7 +289,7 @@ actor GTFSStore {
         // GRDB checkpoints on close, so in practice they are empty and SQLite rejects the mismatched
         // header — but "usually harmless" is not a property to rely on for the file the whole app reads.
         // The staging file's own sidecars are orphaned by the same rename and nothing else deletes them.
-        for base in [Self.dbURL, Self.stagingDBURL] {
+        for base in [dbURL, stagingDBURL] {
             for suffix in ["-wal", "-shm"] {
                 try? fm.removeItem(at: URL(fileURLWithPath: base.path + suffix))
             }
@@ -244,11 +304,21 @@ actor GTFSStore {
     }
 
     private func currentPathIsWiFiOrWired() async -> Bool {
-        await withCheckedContinuation { cont in
-            let monitor = NWPathMonitor()
+        let monitor = NWPathMonitor()
+        // `cancel()` does not stop an update already queued behind the one being handled, so the handler can
+        // run a second time — and resuming a checked continuation twice is a crash, not a warning. The flag
+        // makes the first path the only one that answers.
+        let answered = OSAllocatedUnfairLock(initialState: false)
+        return await withCheckedContinuation { cont in
             monitor.pathUpdateHandler = { path in
-                cont.resume(returning: !path.usesInterfaceType(.cellular))
+                let isFirst = answered.withLock { done -> Bool in
+                    guard !done else { return false }
+                    done = true
+                    return true
+                }
+                guard isFirst else { return }
                 monitor.cancel()
+                cont.resume(returning: !path.usesInterfaceType(.cellular))
             }
             monitor.start(queue: DispatchQueue.global())
         }
@@ -265,7 +335,7 @@ actor GTFSStore {
 
     func feedInfo() throws -> (etag: String?, lastModified: String?, ingestedAt: String?, dbSizeBytes: Int) {
         guard let dbQueue else { return (nil, nil, nil, 0) }
-        let size = (try? FileManager.default.attributesOfItem(atPath: Self.dbURL.path)[.size] as? Int) ?? 0
+        let size = (try? FileManager.default.attributesOfItem(atPath: dbURL.path)[.size] as? Int) ?? 0
         return try dbQueue.read { db in
             (
                 try String.fetchOne(db, sql: "SELECT value FROM meta WHERE key = 'etag'"),
@@ -411,7 +481,7 @@ actor GTFSStore {
             // Shift the *date* first, then anchor it. Anchoring first and subtracting a day is a day of
             // fixed length, which the changeover days aren't — and the anchor itself can land at 23:00 the
             // evening before, so the calendar lookup has to key off the day, not off the anchor.
-            let day = AdelaideTZ.calendar.date(byAdding: .day, value: -daysAgo, to: from)!
+            guard let day = AdelaideTZ.calendar.date(byAdding: .day, value: -daysAgo, to: from) else { continue }
             let serviceDate = AdelaideTZ.startOfDay(day)
             let serviceIDs = try activeServiceIDs(on: day)
             guard !serviceIDs.isEmpty else { continue }
@@ -444,7 +514,7 @@ actor GTFSStore {
                 let wallClock = serviceDate.addingTimeInterval(TimeInterval(depSeconds))
                 guard wallClock >= from, wallClock <= to else { continue }
                 results.append(Departure(
-                    tripID: row["trip_id"], stopSequence: row["seq"], routeID: row["route_id"],
+                    tripID: row["trip_id"], stopSequence: row["seq"], stopID: stopID, routeID: row["route_id"],
                     routeShortName: row["short_name"] ?? "", routeColor: row["color"],
                     headsign: row["headsign"] ?? "", direction: row["direction"],
                     scheduledTime: wallClock, liveTime: nil, state: .scheduled
@@ -607,7 +677,7 @@ actor GTFSStore {
     /// afterwards and no ambiguity about which copy is authoritative.
     private func user() throws -> DatabaseQueue {
         if let userQueue { return userQueue }
-        let queue = try DatabaseQueue(path: Self.userDBURL.path)
+        let queue = try DatabaseQueue(path: userDBURL.path)
         try Schema.userMigrator().migrate(queue)
         userQueue = queue
         try? adoptLegacyFavourites(into: queue)

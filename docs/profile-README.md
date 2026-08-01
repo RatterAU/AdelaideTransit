@@ -2,6 +2,8 @@
 
 If the app doesn't exist, I make it. If it exists but does half of what I need, I make that too.
 
+Australian. Swift, mostly. Everything here runs on the device, talks straight to the source, and keeps no account of you.
+
 <br>
 
 <table>
@@ -42,6 +44,24 @@ Quote tiles, the live ratio, a depth picker and the strike ladder with the spot 
 [Open it](https://ratterau.github.io/tenfold/) · one HTML file, 27 KB, no dependencies, no build step, no tracking.
 
 `HTML` · `Vanilla JS` · `0DTE` · `SPX/SPY`
+
+</td>
+</tr>
+<tr>
+<td width="200" valign="top">
+<a href="https://github.com/RatterAU/Bookie"><img src="https://raw.githubusercontent.com/RatterAU/RatterAU/main/docs/bookie-card.svg" width="190" alt="Bookie price board — win prices in lime, place prices in yellow"></a>
+</td>
+<td valign="top">
+
+### [Bookie](https://github.com/RatterAU/Bookie)
+
+An on-course bookmaker's satchel, on a Mac.
+
+Fielding a race meeting is a speed problem wearing a maths problem's clothes. The arithmetic is easy. Doing it while a punter is mid-sentence and eleven other people are holding cash is not.
+
+So: stake, runner, one letter, and the docket prints on the keystroke — the stake box takes digits only, which is what frees a letter up to be a command. Frame the market yourself and it stays framed as the market moves under it. Punter-facing boards on two TVs, each knowing which state it is showing. Settlement that pays whichever place terms are better, the ones sold or the ones final, so nobody ends up worse off than the paper in their hand.
+
+`Swift` · `SwiftUI` · `SQLite` · `Combine` · `ESC/POS over USB`
 
 </td>
 </tr>

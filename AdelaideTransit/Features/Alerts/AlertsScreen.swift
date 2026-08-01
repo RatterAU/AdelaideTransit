@@ -137,8 +137,12 @@ struct AlertsScreen: View {
     /// is the thing you opened, not the individual row. Rewritten to exactly the active set so stale IDs
     /// don't accumulate in UserDefaults.
     private func markSeen() {
-        seenAlertIDsRaw = SeenAlerts.markSeen(Set(alerts.map(\.id)))
-        router.alertBadgeCount = 0
+        // Only when it actually changes. This runs on every frame the tab is open, and an unchanged rewrite
+        // is still a `UserDefaults` write plus an `@AppStorage` invalidation, which re-renders every view
+        // reading the key — including the row list this is called from.
+        let raw = SeenAlerts.markSeen(Set(alerts.map(\.id)))
+        if raw != seenAlertIDsRaw { seenAlertIDsRaw = raw }
+        if router.alertBadgeCount != 0 { router.alertBadgeCount = 0 }
     }
 
     private func loadFavourites() async {

@@ -150,6 +150,12 @@ enum Schema {
                 FROM stop_times st JOIN trips t ON t.id = st.trip_id
                 GROUP BY st.stop_id;
 
+            -- Load-bearing. `CREATE TABLE AS SELECT` builds no indexes, so the correlated subquery below had
+            -- none to use: a full scan of this table for every row of `stops`, which at 9171 stops against
+            -- 9171 counted stops is ~84 million comparisons. It runs inside every ingest and inside the
+            -- in-place backfill. One index turns it into 9171 lookups.
+            CREATE INDEX stop_route_counts_sid ON stop_route_counts(sid);
+
             UPDATE stops SET importance =
                 COALESCE((SELECT routes FROM stop_route_counts WHERE sid = stops.id), 0);
 

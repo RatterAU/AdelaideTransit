@@ -28,7 +28,12 @@ final class ZipReader {
     }
 
     /// Decompressed bytes of one archive member.
-    func extract(_ name: String) throws -> Data {
+    ///
+    /// `[UInt8]`, not `Data`, because the only caller parses byte by byte and used to build its own
+    /// `[UInt8]` copy of whatever came back. `stop_times.txt` inflates to tens of megabytes, so that copy
+    /// meant the largest file in the feed existed twice at once — survivable in the foreground, and exactly
+    /// the kind of peak that gets a `BGAppRefreshTask` jetsammed instead of finishing.
+    func extract(_ name: String) throws -> [UInt8] {
         guard let entry = entries[name] else { throw ZipError.entryNotFound(name) }
 
         var offset = Int(entry.localHeaderOffset)
@@ -39,26 +44,27 @@ final class ZipReader {
 
         let compressedRange = offset..<(offset + Int(entry.compressedSize))
         guard compressedRange.upperBound <= data.count else { throw ZipError.malformed }
-        let compressed = data.subdata(in: compressedRange)
 
         switch entry.method {
         case 0:
-            return compressed
+            return [UInt8](data.subdata(in: compressedRange))
         case 8:
-            return try inflate(compressed, uncompressedSize: Int(entry.uncompressedSize))
+            return try inflate(range: compressedRange, uncompressedSize: Int(entry.uncompressedSize))
         default:
             throw ZipError.unsupportedMethod(entry.method)
         }
     }
 
-    private func inflate(_ compressed: Data, uncompressedSize: Int) throws -> Data {
-        guard uncompressedSize > 0 else { return Data() }
-        var output = Data(count: uncompressedSize)
-        let written = output.withUnsafeMutableBytes { dst -> Int in
-            compressed.withUnsafeBytes { src -> Int in
+    /// Inflates straight out of the memory-mapped archive. Copying the compressed range into its own `Data`
+    /// first was another ~15 MB of the peak, for bytes we read exactly once.
+    private func inflate(range: Range<Int>, uncompressedSize: Int) throws -> [UInt8] {
+        guard uncompressedSize > 0 else { return [] }
+        var output = [UInt8](repeating: 0, count: uncompressedSize)
+        let written = output.withUnsafeMutableBufferPointer { dst -> Int in
+            data.withUnsafeBytes { src -> Int in
                 compression_decode_buffer(
-                    dst.bindMemory(to: UInt8.self).baseAddress!, uncompressedSize,
-                    src.bindMemory(to: UInt8.self).baseAddress!, compressed.count,
+                    dst.baseAddress!, uncompressedSize,
+                    src.bindMemory(to: UInt8.self).baseAddress! + range.lowerBound, range.count,
                     nil, COMPRESSION_ZLIB
                 )
             }

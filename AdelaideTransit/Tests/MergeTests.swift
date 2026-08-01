@@ -8,9 +8,9 @@ struct MergeTests {
 
     private let midnight = Date(timeIntervalSince1970: 1_700_000_000)
 
-    private func departure(seq: Int, offset: TimeInterval, base: Date) -> Departure {
+    private func departure(seq: Int, offset: TimeInterval, base: Date, stopID: String? = nil) -> Departure {
         Departure(
-            tripID: "T1", stopSequence: seq, routeID: "R1", routeShortName: "155",
+            tripID: "T1", stopSequence: seq, stopID: stopID ?? "S\(seq)", routeID: "R1", routeShortName: "155",
             routeColor: nil, headsign: "Stop \(seq)", direction: nil,
             scheduledTime: base.addingTimeInterval(offset), liveTime: nil, state: .scheduled
         )
@@ -289,6 +289,59 @@ struct MergeTests {
         #expect(abs((merged[1].delta ?? 0) - 288) < 1)
         #expect(merged[0].delta == 360) // stop 5 keeps its own explicit prediction
         #expect(merged[2].delta == 180) // stop 10 keeps its own explicit prediction
+    }
+
+    /// The bug that made a bus pulling into the stop read as four minutes away. Measured on the live feed:
+    /// 18 of 336 running trips publish `stop_sequence` values shifted a stop from `stop_times.txt`, so the
+    /// update filed under sequence 5 was really about the stop at sequence 6. Matching by `stop_id` — always
+    /// published, always belonging to the trip — is what makes the times land on the right stops.
+    @Test func predictionsAreMatchedByStopIDWhenTheFeedsSequencesAreShifted() {
+        let rows = [5, 6].map { departure(seq: $0, offset: TimeInterval($0 * 60), base: midnight) }
+        let merged = Merge.mergeDepartures(
+            rows, tripID: "T1",
+            frame: frame(predictions: ["T1": [
+                // Shifted: the entry numbered 5 carries stop S6's id, and so on.
+                5: Prediction(stopID: "S6", arrival: midnight.addingTimeInterval(6 * 60 + 60), departure: nil, delay: nil, scheduleRelationship: .scheduled),
+                6: Prediction(stopID: "S7", arrival: midnight.addingTimeInterval(7 * 60 + 60), departure: nil, delay: nil, scheduleRelationship: .scheduled)
+            ]], timestamp: midnight)
+        )
+        let atSix = merged.first { $0.stopSequence == 6 }
+        #expect(atSix?.delta == 60)                                   // its own stop's prediction, not stop 7's
+        #expect(atSix?.displayTime == midnight.addingTimeInterval(6 * 60 + 60))
+        // Two-sided: stop 5 must not have swallowed stop 6's time either.
+        #expect(merged.first { $0.stopSequence == 5 }?.displayTime != midnight.addingTimeInterval(6 * 60 + 60))
+    }
+
+    /// Sequence 999 is the trip's final stop, not junk — 142 of 142 of them were the last stop in
+    /// `stop_times`. A trip publishing only 999 is a bus on its last leg, so every other stop is behind it;
+    /// treating it as "no position at all" left those stops counting down to times long past.
+    @Test func aTripPublishingOnlyTheTerminusMarksEarlierStopsDeparted() {
+        let ts = midnight.addingTimeInterval(1000)
+        let rows = [departure(seq: 3, offset: 300, base: midnight)]
+        let merged = Merge.mergeDepartures(
+            rows, tripID: "T1",
+            frame: frame(
+                predictions: ["T1": [
+                    999: Prediction(stopID: "S40", arrival: midnight.addingTimeInterval(1200), departure: nil, delay: nil, scheduleRelationship: .scheduled)
+                ]],
+                timestamp: ts
+            )
+        )
+        #expect(merged[0].displayTime <= ts)
+    }
+
+    /// Stops away is a count of remaining stops, not a difference of sequence numbers: static sequences skip
+    /// numbers on 26534 of 26535 trips, so subtracting them overstated how far back the bus was.
+    @Test func stopsAwayCountsRemainingStopsNotSequenceGaps() {
+        let dep = departure(seq: 40, offset: 600, base: midnight)
+        let f = frame(predictions: ["T1": [
+            10: Prediction(stopID: "S10", arrival: midnight, departure: nil, delay: nil, scheduleRelationship: .scheduled),
+            25: Prediction(stopID: "S25", arrival: midnight, departure: nil, delay: nil, scheduleRelationship: .scheduled),
+            40: Prediction(stopID: "S40", arrival: midnight, departure: nil, delay: nil, scheduleRelationship: .scheduled)
+        ]])
+        #expect(Merge.stopsAway(for: dep, frame: f) == 2)             // two stops before it, not 30
+        // Two-sided: the stop the bus is working toward is zero away, not nil.
+        #expect(Merge.stopsAway(for: departure(seq: 10, offset: 0, base: midnight), frame: f) == 0)
     }
 
     @Test func mergeSortsByStopSequence() {
