@@ -188,7 +188,7 @@ xcodebuild -project AdelaideTransit.xcodeproj -scheme AdelaideTransit \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
 ```
 
-108 tests, Swift Testing. `project.yml` is the source of truth for the project — run `xcodegen generate` after adding any file, and never hand-edit the `.xcodeproj`.
+110 tests, Swift Testing. `project.yml` is the source of truth for the project — run `xcodegen generate` after adding any file, and never hand-edit the `.xcodeproj`.
 
 </details>
 

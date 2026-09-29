@@ -755,10 +755,16 @@ actor GTFSStore {
         }
     }
 
+    /// A no-op when this stop (and route) is already starred. The star button fires an unguarded `Task`, so a
+    /// quick double tap ran two inserts before either toggle saw the first — two identical rows, one of which
+    /// the star could then never remove.
     func addFavourite(stopID: String, routeID: String?, label: String?, group: String?) throws {
         try user().write { db in
-            try db.execute(sql: "INSERT INTO favourites(stop_id, route_id, label, grp) VALUES (?, ?, ?, ?)",
-                            arguments: [stopID, routeID, label, group])
+            try db.execute(sql: """
+                INSERT INTO favourites(stop_id, route_id, label, grp)
+                SELECT ?, ?, ?, ?
+                WHERE NOT EXISTS (SELECT 1 FROM favourites WHERE stop_id = ? AND route_id IS ?)
+                """, arguments: [stopID, routeID, label, group, stopID, routeID])
         }
     }
 

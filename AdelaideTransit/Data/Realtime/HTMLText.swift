@@ -7,8 +7,7 @@ import Foundation
 /// WebKit, must run on the main actor, and takes milliseconds per string, which is untenable for a list that
 /// re-renders on every realtime frame. Structure that survives is what a rider needs — line breaks and bullets.
 enum HTMLText {
-    private static let blockBreaks = ["</p>", "</div>", "</tr>", "</h1>", "</h2>", "</h3>", "</h4>", "</h5>", "</h6>"]
-    private static let lineBreaks = ["<br>", "<br/>", "<br />"]
+    private static let blockBreaks = ["</p>", "</div>", "</tr>", "</ul>", "</ol>", "</h1>", "</h2>", "</h3>", "</h4>", "</h5>", "</h6>"]
 
     private static let entities: [String: String] = [
         "&nbsp;": " ", "&lt;": "<", "&gt;": ">", "&quot;": "\"",
@@ -22,10 +21,12 @@ enum HTMLText {
         guard html.contains("<") || html.contains("&") else { return html }
 
         var text = html
-        for tag in lineBreaks { text = text.replacingOccurrences(of: tag, with: "\n", options: .caseInsensitive) }
+        // Regexes, not literal tags: `<li class="…">` and `<br clear="all">` slipped past exact matches, and
+        // the tag stripper below then ate the bullet or the line break along with the attributes.
+        text = text.replacing(/<br\b[^>]*>/.ignoresCase(), with: "\n")
         for tag in blockBreaks { text = text.replacingOccurrences(of: tag, with: "\n", options: .caseInsensitive) }
         // `<li>` opens the line; `</li>` must not also break, or every bullet gets a blank line after it.
-        text = text.replacingOccurrences(of: "<li>", with: "\n• ", options: .caseInsensitive)
+        text = text.replacing(/<li\b[^>]*>/.ignoresCase(), with: "\n• ")
         text = text.replacingOccurrences(of: "</li>", with: "", options: .caseInsensitive)
         // Table cells collapse onto one line per row — a real grid can't survive in plain text anyway.
         text = text.replacingOccurrences(of: "</td>", with: " — ", options: .caseInsensitive)

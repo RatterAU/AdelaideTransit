@@ -97,6 +97,16 @@ struct GTFSStoreTests {
         #expect(favourites.first?.stopName == "Grenfell St - Stop A1")
     }
 
+    @Test func starringAStopTwiceKeepsOneFavourite() async throws {
+        let (store, directory) = try await makeStore()
+        defer { remove(directory) }
+
+        try await store.addFavourite(stopID: "10001", routeID: nil, label: "Work", group: nil)
+        try await store.addFavourite(stopID: "10001", routeID: nil, label: "Work", group: nil)
+        try await store.addFavourite(stopID: "10002", routeID: nil, label: "Home", group: nil)
+        #expect(try await store.favourites().map(\.stopID).sorted() == ["10001", "10002"])
+    }
+
     /// Skipped, not deleted: the stop may well come back in the next timetable, and dropping user data
     /// because a feed momentarily disagrees is how favourites vanish for good.
     @Test func aFavouriteMissingFromTheFeedIsHiddenRatherThanDestroyed() async throws {

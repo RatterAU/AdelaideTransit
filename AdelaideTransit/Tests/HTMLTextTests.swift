@@ -29,6 +29,11 @@ struct HTMLTextTests {
         #expect(HTMLText.plain(html) == "• Stop 19 South Rd\n• Stop 20 South Rd")
     }
 
+    @Test func tagsWithAttributesKeepTheirBulletsAndBreaks() {
+        let html = "<ul><li class=\"x\">Stop 19</li><LI>Stop 20</LI></ul>One<BR clear=\"all\">Two"
+        #expect(HTMLText.plain(html) == "• Stop 19\n• Stop 20\nOne\nTwo")
+    }
+
     @Test func decodesNamedEntities() {
         #expect(HTMLText.plain("<p>Stop 22 York Avenue &ndash; south of Byron Ave&nbsp;</p>")
             == "Stop 22 York Avenue – south of Byron Ave")
