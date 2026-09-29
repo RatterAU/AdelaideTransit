@@ -4,6 +4,8 @@ import MapKit
 struct RouteInfo {
     let shortName: String
     let color: Color
+    /// `Theme.routeTextColor` — the badge is drawn on the route colour, and plenty of those are pale.
+    var textColor: Color = .white
     let type: Int
 }
 
@@ -25,6 +27,7 @@ final class VehicleAnnotation: NSObject, @preconcurrency MKAnnotation {
     @objc dynamic var coordinate: CLLocationCoordinate2D
     var routeShortName: String
     var color: Color
+    var textColor: Color
     var bearing: Double?
     /// Interpolated from the timetable, not observed — drawn faded so it never reads as a real fix.
     let isGhost: Bool
@@ -35,6 +38,7 @@ final class VehicleAnnotation: NSObject, @preconcurrency MKAnnotation {
         let info = vehicle.routeID.flatMap { routes[$0] }
         routeShortName = info?.shortName ?? "?"
         color = info?.color ?? .accentColor
+        textColor = info?.textColor ?? .white
         bearing = vehicle.bearing
         self.isGhost = isGhost
     }
@@ -48,6 +52,7 @@ final class VehicleAnnotation: NSObject, @preconcurrency MKAnnotation {
         if let info = vehicle.routeID.flatMap({ routes[$0] }) {
             if routeShortName != info.shortName { routeShortName = info.shortName; changed = true }
             if color != info.color { color = info.color; changed = true }
+            if textColor != info.textColor { textColor = info.textColor; changed = true }
         }
         // A stationary bus re-publishes the same coordinate every poll; animating that is hundreds of
         // pointless Core Animation transactions per minute across a full map of vehicles.
@@ -149,17 +154,17 @@ final class VehicleMarkerView: MKAnnotationView {
         addSubview(badge)
 
         label.font = .systemFont(ofSize: 12, weight: .bold)
-        label.textColor = .white
         label.textAlignment = .center
         addSubview(label)
 
-        chevron.tintColor = .white
         chevron.contentMode = .scaleAspectFit
         addSubview(chevron)
     }
 
     /// Badge width grows to fit the route number — a fixed 44pt box was clipping anything longer than 2 chars.
-    func configure(routeShortName: String, color: Color, bearing: Double?, opacity: CGFloat, scale: CGFloat) {
+    func configure(
+        routeShortName: String, color: Color, textColor: Color, bearing: Double?, opacity: CGFloat, scale: CGFloat
+    ) {
         let textWidth = (routeShortName as NSString).size(withAttributes: [.font: label.font as Any]).width
         let showsChevron = bearing != nil
         let width = max(30, ceil(textWidth) + 18 + (showsChevron ? 14 : 0))
@@ -174,6 +179,8 @@ final class VehicleMarkerView: MKAnnotationView {
         let labelWidth = width - (showsChevron ? 16 : 0)
         label.frame = CGRect(x: 8, y: 0, width: labelWidth - 8, height: bounds.height)
         label.text = routeShortName
+        label.textColor = UIColor(textColor)
+        chevron.tintColor = UIColor(textColor)
         alpha = opacity
 
         if let bearing {
@@ -448,6 +455,7 @@ struct MapViewRepresentable: UIViewRepresentable {
                         view.configure(
                             routeShortName: existing.routeShortName,
                             color: isGhost ? .gray : existing.color,
+                            textColor: isGhost ? .white : existing.textColor,
                             bearing: existing.bearing,
                             opacity: isGhost ? 0.45 : 1,
                             scale: parent.markerScale
@@ -529,6 +537,7 @@ struct MapViewRepresentable: UIViewRepresentable {
                 view.configure(
                     routeShortName: vehicleAnn.routeShortName,
                     color: vehicleAnn.isGhost ? .gray : vehicleAnn.color,
+                    textColor: vehicleAnn.isGhost ? .white : vehicleAnn.textColor,
                     bearing: vehicleAnn.bearing,
                     opacity: vehicleAnn.isGhost ? 0.45 : 1,
                     scale: parent.markerScale

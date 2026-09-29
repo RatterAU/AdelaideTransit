@@ -79,7 +79,6 @@ struct MapScreen: View {
     @AppStorage("hapticsEnabled") private var haptics = true
 
     private static let adelaideCBD = CLLocationCoordinate2D(latitude: -34.9285, longitude: 138.6007)
-    private static let liveCutoff: TimeInterval = 120 // §11: only show vehicles updated within 2 min
     /// Grid resolution across the viewport. 18 held the on-screen annotation count under ~235 at every zoom
     /// against the real 9171-stop feed (versus an unbounded 4900+ before thinning existed); 24 trades some
     /// of that headroom back for stops appearing at a wider zoom, which is the whole point of the number.
@@ -136,7 +135,9 @@ struct MapScreen: View {
                 guard vehicle.lat >= bounds.minLat, vehicle.lat <= bounds.maxLat,
                       vehicle.lon >= bounds.minLon, vehicle.lon <= bounds.maxLon else { return false }
             }
-            guard now.timeIntervalSince(vehicle.timestamp) <= Self.liveCutoff else { return false }
+            // The Settings stale cutoff, not a second hardcoded one: at 120 s here against 90 s there, a bus
+            // sat on the map while its departure row said "no GPS".
+            guard now.timeIntervalSince(vehicle.timestamp) <= GhostCutoffs.staleAfter else { return false }
             guard let routeID = vehicle.routeID, let type = routes[routeID]?.type else { return true }
             if hideBus && type == 3 { return false }
             if hideTram && type == 0 { return false }
@@ -299,6 +300,7 @@ struct MapScreen: View {
                 RouteInfo(
                     shortName: $0.shortName,
                     color: Theme.routeColor($0.color, seed: $0.shortName),
+                    textColor: Theme.routeTextColor($0.color),
                     type: $0.type
                 )
             }
@@ -513,7 +515,7 @@ struct MapScreen: View {
             return
         }
         let info = try? await store.tripInfo(tripID: tripID)
-        tripRouteColor = Theme.routeColor(info?.color)
+        tripRouteColor = Theme.routeColor(info?.color, seed: info?.shortName ?? "")
         tripRouteID = info?.routeID
         tripShapePoints = (try? await store.shape(tripID: tripID)) ?? []
         tripStopTimes = (try? await store.allStopTimes(tripID: tripID)) ?? []

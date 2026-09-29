@@ -25,7 +25,6 @@ struct AlertsScreen: View {
     @Environment(\.realtimeEngine) private var engine
 
     @State private var alerts: [ServiceAlert] = []
-    @State private var favouriteStopIDs: Set<String> = []
     @State private var routes: [String: (shortName: String, longName: String, color: String?, type: Int)] = [:]
     @State private var modeFilter: Int?
     @State private var expandedID: String?
@@ -42,7 +41,7 @@ struct AlertsScreen: View {
         let visible = modeFilter.map { mode in
             alerts.filter { alert in alert.informedRouteIDs.contains { routes[$0]?.type == mode } }
         } ?? alerts
-        return splitAlerts(visible, favouriteRoutes: favouriteRoutes, favouriteStops: favouriteStopIDs)
+        return splitAlerts(visible, favouriteRoutes: favouriteRoutes, favouriteStops: router.favouriteStopIDs)
     }
 
     var body: some View {
@@ -79,7 +78,6 @@ struct AlertsScreen: View {
             .navigationTitle("Alerts")
         }
         .task { await engine.setDemand(.alertsTab) }
-        .task { await loadFavourites() }
         .task {
             for await frame in engine.frames {
                 alerts = frame.alerts
@@ -103,8 +101,8 @@ struct AlertsScreen: View {
                         .foregroundStyle(severityColor(alert.severity))
                     VStack(alignment: .leading, spacing: 2) {
                         Text(alert.headerText).font(.subheadline).bold()
-                        if let from = alert.activeFrom {
-                            Text(from, style: .relative).font(.caption).foregroundStyle(.secondary)
+                        if let window = activeWindowText(alert) {
+                            Text(window).font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -115,6 +113,15 @@ struct AlertsScreen: View {
                 Text(alert.descriptionText).font(.caption).foregroundStyle(.secondary)
             }
         }
+    }
+
+    /// "From 3 Oct" for planned works, "Until 5 Oct, 5:00 am" for a running one. `style: .relative` printed a
+    /// bare "2 days" with no direction — started two days ago, or starts in two? — and never said when it ends.
+    private func activeWindowText(_ alert: ServiceAlert) -> String? {
+        let style = Date.FormatStyle(timeZone: AdelaideTZ.timeZone).day().month().hour().minute()
+        if let from = alert.activeFrom, from > .now { return "From \(from.formatted(style))" }
+        if let to = alert.activeTo { return "Until \(to.formatted(style))" }
+        return nil
     }
 
     private func severityGlyph(_ severity: TransitRealtime_Alert.SeverityLevel) -> String {
@@ -143,10 +150,5 @@ struct AlertsScreen: View {
         let raw = SeenAlerts.markSeen(Set(alerts.map(\.id)))
         if raw != seenAlertIDsRaw { seenAlertIDsRaw = raw }
         if router.alertBadgeCount != 0 { router.alertBadgeCount = 0 }
-    }
-
-    private func loadFavourites() async {
-        let favs = (try? await store.favourites()) ?? []
-        favouriteStopIDs = Set(favs.map(\.stopID))
     }
 }

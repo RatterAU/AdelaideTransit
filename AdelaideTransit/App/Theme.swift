@@ -189,7 +189,7 @@ extension TrackingState {
         case .pending: return "Checking live times"
         case .scheduled: return "Scheduled"
         case .live: return "LIVE"
-        case .stale(let secondsAgo): return "Last seen \(secondsAgo / 60)m ago"
+        case .stale(let secondsAgo): return "Last seen \(pingAgeText(TimeInterval(secondsAgo)))"
         case .ghost: return "Not tracking"
         case .cancelled: return "Cancelled"
         }

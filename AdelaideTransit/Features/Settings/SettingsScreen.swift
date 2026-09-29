@@ -121,7 +121,7 @@ struct SettingsScreen: View {
 
                 Section("Map") {
                     Toggle("Show all live buses", isOn: $showAllLiveBuses)
-                    Text("When off, buses still appear once you open a trip from a stop. Only shows vehicles updated in the last 2 minutes either way.")
+                    Text("When off, buses still appear once you open a trip from a stop. Either way, a bus not heard from within the stale cutoff is hidden.")
                         .font(.caption).foregroundStyle(.secondary)
                     Toggle("Auto-centre on my location at launch", isOn: $autoCenterOnLaunch)
                     Toggle("Keep screen awake while tracking a bus", isOn: $keepScreenAwake)

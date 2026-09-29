@@ -356,7 +356,7 @@ actor GTFSStore {
         let weekday = AdelaideTZ.calendar.component(.weekday, from: date) // 1 = Sunday
         let columns = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
         let column = columns[weekday - 1]
-        let ymd = AdelaideTZ.yyyymmdd(date)
+        let ymd = key
 
         let ids: Set<String> = try dbQueue.read { db in
             var set = Set<String>()
@@ -485,7 +485,7 @@ actor GTFSStore {
             let serviceDate = AdelaideTZ.startOfDay(day)
             let serviceIDs = try activeServiceIDs(on: day)
             guard !serviceIDs.isEmpty else { continue }
-            let placeholders = serviceIDs.map { _ in "?" }.joined(separator: ",")
+            let placeholders = databaseQuestionMarks(count: serviceIDs.count)
             // Bound the scan to the window in SQL. Without this every call read *every* departure of the
             // whole service day at this stop — the busiest stop is served by 62 routes — joined trips and
             // routes for all of them, then threw almost all of it away in Swift. `st_stop(stop_id, dep)`
@@ -765,10 +765,4 @@ actor GTFSStore {
     func removeFavourite(id: Int64) throws {
         try user().write { db in try db.execute(sql: "DELETE FROM favourites WHERE id = ?", arguments: [id]) }
     }
-}
-
-/// `?, ?, ?` for an `IN` clause. Building it by hand is how a bound query turns into string interpolation
-/// and stops being a bound query.
-private func databaseQuestionMarks(count: Int) -> String {
-    Array(repeating: "?", count: count).joined(separator: ", ")
 }

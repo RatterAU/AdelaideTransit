@@ -11,7 +11,7 @@ enum HTMLText {
     private static let lineBreaks = ["<br>", "<br/>", "<br />"]
 
     private static let entities: [String: String] = [
-        "&nbsp;": " ", "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"",
+        "&nbsp;": " ", "&lt;": "<", "&gt;": ">", "&quot;": "\"",
         "&apos;": "'", "&#39;": "'", "&ndash;": "–", "&mdash;": "—",
         "&lsquo;": "\u{2018}", "&rsquo;": "\u{2019}", "&ldquo;": "\u{201C}", "&rdquo;": "\u{201D}",
         "&hellip;": "…", "&bull;": "•", "&middot;": "·", "&deg;": "°", "&trade;": "™",
@@ -41,15 +41,19 @@ enum HTMLText {
         for (entity, replacement) in entities {
             text = text.replacingOccurrences(of: entity, with: replacement, options: .caseInsensitive)
         }
-        guard text.contains("&#") else { return text }
-        return text.replacing(/&#(x?)([0-9A-Fa-f]+);/) { match in
+        // `&amp;` last, and outside the dictionary: iteration order is random per launch, so "&amp;lt;"
+        // (a literal "&lt;") decoded to "<" on some launches and not others.
+        if text.contains("&#") {
+            text = text.replacing(/&#(x?)([0-9A-Fa-f]+);/) { match in
             let digits = String(match.output.2)
             let radix = match.output.1.isEmpty ? 10 : 16
             guard let value = UInt32(digits, radix: radix), let scalar = Unicode.Scalar(value) else {
                 return String(match.output.0)
             }
             return String(Character(scalar))
+            }
         }
+        return text.replacingOccurrences(of: "&amp;", with: "&", options: .caseInsensitive)
     }
 
     /// Nested block tags leave runs of blank lines behind; collapse them so alerts don't render as a ladder.

@@ -16,6 +16,7 @@ struct FavouritesScreen: View {
     /// The same window the stop sheet uses. This screen used the store's 90-minute default and said so in
     /// fixed text, so widening the window in Settings changed one screen and not the other.
     @AppStorage("departureWindowHours") private var departureWindowHours: Double = 2
+    @AppStorage("pastDeparturesWindowMinutes") private var pastWindowMinutes: Double = 30
     /// The schedule query itself is cheap; re-running it on every 15s frame is not, and the timetable a
     /// query behind is at most a few minutes of tail rows.
     private static let scheduleReloadInterval: TimeInterval = 5 * 60
@@ -137,9 +138,14 @@ struct FavouritesScreen: View {
     private func load() async {
         favourites = ((try? await store.favourites()) ?? [])
         var fresh: [String: [Departure]] = [:]
+        // Fetched from the past window, same as `StopSheet`: a bus scheduled five minutes ago and running
+        // eight late is still coming, but a query starting at now never saw it — so the late bus you were
+        // waiting for was missing here while the stop's own sheet listed it. Gone ones are dropped after merge.
+        let lookback = pastWindowMinutes * 60
         for stopID in Set(favourites.map(\.stopID)) {
             fresh[stopID] = (try? await store.departures(
-                stopID: stopID, from: Date(), window: departureWindowHours * 3600
+                stopID: stopID, from: Date().addingTimeInterval(-lookback),
+                window: lookback + departureWindowHours * 3600
             )) ?? []
         }
         departuresByStop = fresh

@@ -89,6 +89,8 @@ struct FavouriteRow: View {
         .alert("Rename favourite", isPresented: $showRename) {
             TextField("Label", text: $renamePrompt)
             Button("Save") { onRename(renamePrompt) }
+                // An empty label renders as a blank row title.
+                .disabled(renamePrompt.trimmingCharacters(in: .whitespaces).isEmpty)
             Button("Cancel", role: .cancel) {}
         }
     }

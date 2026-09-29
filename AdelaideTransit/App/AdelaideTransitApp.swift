@@ -27,7 +27,7 @@ extension EnvironmentValues {
 final class AppBootstrap {
     var isReady = false
     var isDownloading = false
-    var progressMessage = "Downloading network — about 30 MB"
+    var progressMessage = "Downloading timetable — about 20 MB"
     var errorMessage: String?
 
     func start(store: GTFSStore) async {
@@ -119,7 +119,7 @@ struct AdelaideTransitApp: App {
 
     /// Timetable check runs at most once per Adelaide calendar day, on the first open of that day, detached
     /// so the UI never waits on it. `refreshIfNeeded` does a conditional-GET first, so a day with no new feed
-    /// costs one small request rather than the 30 MB download.
+    /// costs one small request rather than the 19.7 MB download.
     private func dailyRefreshCheck() {
         let today = AdelaideTZ.yyyymmdd(.now)
         let defaults = UserDefaults.standard

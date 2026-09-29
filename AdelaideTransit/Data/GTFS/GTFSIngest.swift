@@ -13,7 +13,10 @@ struct CSVReader: Sequence, IteratorProtocol {
     /// buffer, and building a second one doubled the peak on the biggest file in the feed.
     init(bytes: [UInt8]) {
         self.bytes = bytes
-        var i = 0
+        // Skip a UTF-8 BOM. Plenty of GTFS exporters write one, and it glues itself to the first column
+        // name — `\u{FEFF}stop_id` — so every row read an empty id and was skipped, the staged feed failed
+        // its floors, and no timetable update would ever land.
+        var i = bytes.starts(with: [0xEF, 0xBB, 0xBF]) ? 3 : 0
         header = Self.readRow(bytes, &i) ?? []
         index = i
         var map: [String: Int] = [:]
@@ -125,6 +128,9 @@ enum GTFSIngest {
         request.httpMethod = "HEAD"
         let (_, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { return (true, stored) }
+        // An error page carries no feed identity, so it read as "changed" — a 503 sent the daily check
+        // straight into a 19.7 MB download. Thrown, it is `.deferred` and retried next open.
+        guard (200...299).contains(http.statusCode) else { throw URLError(.badServerResponse) }
         let etag = http.value(forHTTPHeaderField: "ETag")
         let lastModified = http.value(forHTTPHeaderField: "Last-Modified")
         let unchanged = etag != nil && etag == stored.etag
@@ -141,6 +147,10 @@ enum GTFSIngest {
     @discardableResult
     static func downloadZip(to destination: URL) async throws -> FeedMetadata {
         let (tempURL, response) = try await URLSession.shared.download(from: staticFeedURL)
+        // Otherwise an error page is saved as the archive and fails later as "malformed zip".
+        guard let status = (response as? HTTPURLResponse)?.statusCode, (200...299).contains(status) else {
+            throw URLError(.badServerResponse)
+        }
         if FileManager.default.fileExists(atPath: destination.path) {
             try FileManager.default.removeItem(at: destination)
         }

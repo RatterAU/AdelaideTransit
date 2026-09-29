@@ -242,7 +242,8 @@ enum Merge {
 
     /// The stop sequence the bus is currently working toward, inferred from feed pruning: an update is
     /// dropped once the bus passes a stop, so the smallest still-published sequence is where the bus is.
-    /// Nil when the trip has no predictions. 999 is a junk sentinel. This feed carries no
+    /// Nil when the trip has no predictions. 999 marks the final stop, so it is excluded from the published
+    /// fallback — a trip publishing only 999 has no earlier stop to name. This feed carries no
     /// `current_stop_sequence`, so this is the only position signal there is — the same boundary
     /// `mergeDepartures` uses to mark passed stops, exposed for "N stops away" and list trimming.
     /// Pass the trip's stops in wherever the caller has them: the answer is then a *static* sequence, matched

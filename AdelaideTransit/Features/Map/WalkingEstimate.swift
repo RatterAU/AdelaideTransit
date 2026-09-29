@@ -39,7 +39,7 @@ final class WalkingEstimator {
     /// This is also what bounds the favourites list: only the handful of favourites near you now get
     /// routed, with no arbitrary nearest-N cap to make neighbouring rows disagree about which kind of
     /// distance they're showing. It was 8 km, which asked for four times as far as the answer matters.
-    static let maxRoutableMetres: CLLocationDistance = 1_750
+    static let maxRoutableMetres: CLLocationDistance = 2_000
 
     /// 3 decimal places is ~110 m: tight enough that it's still the same walking route, loose enough that
     /// taking a few steps doesn't miss the cache and fire another request.

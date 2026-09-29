@@ -99,6 +99,13 @@ struct CSVReaderTests {
         return (csv.header, out)
     }
 
+    /// A BOM glued to the first column name made `csv[row, "stop_id"]` empty on every row.
+    @Test func aByteOrderMarkDoesNotHideTheFirstColumn() {
+        let (header, body) = rows("\u{FEFF}stop_id,stop_name\n8010,Currie St\n")
+        #expect(header == ["stop_id", "stop_name"])
+        #expect(body == [["8010", "Currie St"]])
+    }
+
     @Test func readsQuotedFieldsContainingCommasAndQuotes() {
         let (header, body) = rows("a,b,c\n1,\"Grenfell St, Stop A1\",\"say \"\"hi\"\"\"\n")
         #expect(header == ["a", "b", "c"])

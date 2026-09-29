@@ -42,6 +42,11 @@ struct HTMLTextTests {
         #expect(HTMLText.plain("<p>Ashwin &amp; Thebarton</p>") == "Ashwin & Thebarton")
     }
 
+    /// An escaped entity stays escaped once: `&amp;lt;` is the text "&lt;", on every launch.
+    @Test func decodesAmpersandOnlyOnce() {
+        #expect(HTMLText.plain("a &amp;lt; b") == "a &lt; b")
+    }
+
     @Test func lineBreakTagsSplitLines() {
         #expect(HTMLText.plain("Line one<br/>Line two") == "Line one\nLine two")
     }

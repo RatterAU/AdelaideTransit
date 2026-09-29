@@ -124,8 +124,8 @@ actor RealtimeEngine {
     private var pathConstrained = false
     /// Consecutive failed fetches per feed, so an outage backs off instead of retrying every 3s forever.
     private var failures: [Feed: Int] = [:]
-    /// When each feed is next allowed to hit the network. Survives a loop restart, which the backoff
-    /// otherwise didn't — see `loop`.
+    /// When a failing feed is next allowed to hit the network. Survives a loop restart, which the backoff
+    /// otherwise didn't — see `loop`. Nil while the feed is healthy.
     private var nextAttempt: [Feed: Date] = [:]
 
     private enum Endpoint {
@@ -299,12 +299,15 @@ actor RealtimeEngine {
                 continue
             }
             let gotNewData = await poll(feed)
-            let delay = max(
-                nextDelay(for: feed, multiplier: multiplier, gotNewData: gotNewData),
-                Self.backoff(failures: failures[feed] ?? 0)
-            )
-            nextAttempt[feed] = Date().addingTimeInterval(delay)
-            try? await Task.sleep(for: .seconds(delay))
+            let backoff = Self.backoff(failures: failures[feed] ?? 0)
+            // Only the backoff survives a restart. Carrying the normal cadence too pinned a feed to the
+            // *previous* screen's rate: warming trip_updates at 4 cycles on the map, then opening a stop,
+            // left the sheet on minute-old predictions for up to another minute. `lastHeaderDate` above
+            // already covers "nothing new published yet" at the new rate.
+            nextAttempt[feed] = backoff > 0 ? Date().addingTimeInterval(backoff) : nil
+            try? await Task.sleep(for: .seconds(max(
+                nextDelay(for: feed, multiplier: multiplier, gotNewData: gotNewData), backoff
+            )))
         }
     }
 

@@ -157,7 +157,7 @@ The first launch will fail with *"Untrusted Developer"*. That's expected. On you
 Open the app again and it works.
 
 > [!NOTE]
-> **First launch downloads the whole timetable (~30 MB)** and files it away on your phone. Give it a minute on Wi-Fi. After that, screens open instantly and only live positions need the network.
+> **First launch downloads the whole timetable (~20 MB)** and files it away on your phone. Give it a minute on Wi-Fi. After that, screens open instantly and only live positions need the network.
 
 > [!IMPORTANT]
 > **With a free Apple ID, the app stops opening after 7 days.** This is Apple's rule, not the app's — free signing certificates expire weekly. To keep using it, plug the phone in and press **⌘R** again; your favourites and settings survive. A paid Apple Developer account extends this to a year.
@@ -188,7 +188,7 @@ xcodebuild -project AdelaideTransit.xcodeproj -scheme AdelaideTransit \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
 ```
 
-65 tests, Swift Testing. `project.yml` is the source of truth for the project — run `xcodegen generate` after adding any file, and never hand-edit the `.xcodeproj`.
+108 tests, Swift Testing. `project.yml` is the source of truth for the project — run `xcodegen generate` after adding any file, and never hand-edit the `.xcodeproj`.
 
 </details>
 
@@ -198,7 +198,7 @@ Two feeds, one junction. The timetable arrives once a day as a big ZIP and goes 
 
 ```mermaid
 flowchart LR
-    ZIP["GTFS timetable ZIP<br/><i>~30 MB, daily</i>"] --> ING[Ingest]
+    ZIP["GTFS timetable ZIP<br/><i>~20 MB, daily</i>"] --> ING[Ingest]
     ING --> NET[("network.sqlite<br/><i>disposable cache</i>")]
     USR[("user.sqlite<br/><i>your favourites</i>")] --> STORE
     NET --> STORE(["GTFSStore<br/><i>the only SQL surface</i>"])

@@ -34,6 +34,7 @@ struct TripDetailSheet: View {
     )?
     @State private var continuationStopTimes: [(seq: Int, stopID: String, name: String, lat: Double, lon: Double, dep: Int)] = []
     @AppStorage("lateThresholdSeconds") private var lateThreshold: Double = 60
+    @AppStorage("use24HourClock") private var use24Hour = false
     @AppStorage(FavouriteRoutes.key) private var favouriteRouteIDsRaw = ""
 
     private var vehicle: LiveVehicle? { frame?.vehicles[tripID] }
@@ -159,7 +160,7 @@ struct TripDetailSheet: View {
                     List {
                         ForEach(stops) { dep in
                             Button {
-                                if let stop = routeStops.first(where: { $0.id == stopID(for: dep) }) {
+                                if let stop = routeStops.first(where: { $0.id == dep.stopID }) {
                                     onSelectStop(stop)
                                 }
                             } label: {
@@ -270,7 +271,9 @@ struct TripDetailSheet: View {
             // partway along *this* route while the real one is still finishing the last, and drawing both
             // puts the same vehicle in two places.
             ghostVehicles: (upstreamVehicle == nil ? ghostVehicle : nil).map { [$0] } ?? [],
-            routes: info.map { [$0.routeID: RouteInfo(shortName: $0.shortName, color: routeColor, type: 0)] } ?? [:],
+            routes: info.map { [$0.routeID: RouteInfo(
+                shortName: $0.shortName, color: routeColor, textColor: Theme.routeTextColor($0.color), type: 0
+            )] } ?? [:],
             userTrackingEnabled: true,
             routeLines: routeLines,
             flyTo: flyTo,
@@ -408,7 +411,7 @@ struct TripDetailSheet: View {
                     if isNext {
                         Text("NEXT")
                             .font(.caption2).bold()
-                            .foregroundStyle(.white)
+                            .foregroundStyle(Theme.routeTextColor(info?.color))
                             .padding(.horizontal, 6).padding(.vertical, 2)
                             .background(routeColor, in: Capsule())
                     }
@@ -440,7 +443,7 @@ struct TripDetailSheet: View {
                     .fontWeight(isYours ? .bold : .regular)
                     .foregroundStyle(isYours ? Color.accentColor : .primary)
                     .contentTransition(.numericText())
-                Text(dep.displayTime, style: .time)
+                Text(dep.displayTime.formatted(clockStyle(use24Hour: use24Hour)))
                     .font(.caption2)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
@@ -461,8 +464,7 @@ struct TripDetailSheet: View {
     /// is. Opaque and app-styled on purpose — MapKit's own callout bubble is translucent and unstyleable,
     /// which over a map of coloured lines is barely readable.
     private func stopPreviewCard(_ stop: StopSummary) -> some View {
-        let dep = stopTimes.first { $0.stopID == stop.id }
-            .flatMap { st in mergedStops.first { $0.stopSequence == st.seq } }
+        let dep = mergedStops.first { $0.stopID == stop.id }
         return HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
@@ -475,7 +477,7 @@ struct TripDetailSheet: View {
                 }
                 if let dep {
                     HStack(spacing: 6) {
-                        Text(dep.displayTime, style: .time).monospacedDigit()
+                        Text(dep.displayTime.formatted(clockStyle(use24Hour: use24Hour))).monospacedDigit()
                         Text("· \(countdownText(to: dep.displayTime))").monospacedDigit()
                         if let delta = dep.delta, abs(delta) >= lateThreshold {
                             Text(deltaLabel(delta)).foregroundStyle(deltaColor(delta))
@@ -500,10 +502,6 @@ struct TripDetailSheet: View {
             onSelectStop(stop)
         }
         .transition(.scale(scale: 0.9, anchor: .bottom).combined(with: .opacity))
-    }
-
-    private func stopID(for dep: Departure) -> String {
-        stopTimes.first { $0.seq == dep.stopSequence }?.stopID ?? ""
     }
 
     private func load() async {
