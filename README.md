@@ -60,6 +60,8 @@ So I built it. It's a personal project — one person, no company behind it, no 
 
 **See where the bus actually is.** Every tracked vehicle on the network appears on the map as its route number with a heading arrow, sliding between GPS updates. Tap one and you follow it: its speed, how many seconds ago it reported, and every stop still ahead of it.
 
+**Know which bus it is.** Tap the vehicle number on a trip and it opens up: rego, chassis and body, when it was built and how old it is, seats, depot, operator and its history. There's a photo too — of that exact bus when one exists on Wikimedia Commons, otherwise one of the same model, and the caption tells you which. Where a bus reports how full it is, you'll see that as well: on the trip, and as a small icon on its departure row.
+
 **Know if you'll make it.** Each departure shows a countdown *and* a clock time, because "5 min" and "4:21 pm" answer different questions. If you're too far away to catch it on foot, the app says so plainly instead of letting you jog for nothing.
 
 **Know when it's late.** Delays come from the live feed and are colour-coded: on time, running early, running late. If a bus is recovering from a delay, the number counts down with it rather than freezing on a stale figure.
@@ -129,6 +131,22 @@ open AdelaideTransit.xcodeproj
 
 <sub>No Homebrew? Install it from <a href="https://brew.sh">brew.sh</a> first, then run the above.</sub>
 
+<details>
+<summary><b>Optional — bus details (rego, model, photo)</b></summary>
+
+<br>
+
+The live feed only says a bus's fleet number. Everything else comes from a snapshot of the [Australian Bus Fleet Lists](https://fleetlists.busaustralia.com/index-sa.php), an enthusiast-run site whose terms allow reference use, so the snapshot isn't published in this repo. Build your own copy, for your own phone:
+
+```bash
+python3 ../scripts/fleet_snapshot.py   # writes Resources/fleet.json, ~1,100 buses
+xcodegen generate
+```
+
+Skip it and the app works exactly the same, minus the bus-details card. Re-run it now and then as the fleet changes.
+
+</details>
+
 ### Step 3 — Tell Xcode it's yours
 
 Xcode is now open. In the left sidebar click the blue **AdelaideTransit** project icon at the very top, then:
@@ -188,7 +206,7 @@ xcodebuild -project AdelaideTransit.xcodeproj -scheme AdelaideTransit \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
 ```
 
-110 tests, Swift Testing. `project.yml` is the source of truth for the project — run `xcodegen generate` after adding any file, and never hand-edit the `.xcodeproj`.
+114 tests, Swift Testing (one skips without the fleet snapshot). `project.yml` is the source of truth for the project — run `xcodegen generate` after adding any file, and never hand-edit the `.xcodeproj`.
 
 </details>
 
@@ -231,7 +249,9 @@ Most of the app's design came from poking at the real feeds rather than trusting
 | **No `ETag`, no `Last-Modified`**, and gzip is ignored — every poll is a full, uncompressed download | Pre-fetching happens only on unconstrained Wi-Fi, never on cellular or Low Data |
 | **Nothing reports which stop a bus is at** — 0 of 627 vehicles carry that field | Position is inferred from which stops have dropped out of the trip's update list: the lowest one still published *is* where the bus is. Held for 790 of 792 trips over five minutes |
 | **Predicted arrival times are absolute, and a delay figure is never sent** — 14,098 out of 14,098 | Delay is computed, and stops without their own prediction are interpolated between the nearest known ones. That's what lets a recovering bus tick 6 min late → 3, instead of freezing |
-| **No occupancy data at all** | There's no crowding UI, rather than an invented one |
+| **Crowding is reported by only a few buses** — none until recently, 26 of 413 when last measured | Shown where a bus reports it, and nowhere else. No guesses for the rest |
+| **The vehicle field is just a fleet number** — no rego, no model | Rego, model, age and photo come from a separate fleet snapshot, looked up by that number |
+| **Route types aren't only the basic GTFS codes** — 319 bus routes, including every school route, are filed as 701 or 712 rather than 3 | They're folded back to "bus" in one place, so hiding buses or filtering alerts by mode catches all of them |
 | 14,895 of 31,379 trips **continue under a different route number** (a 502 becomes a 110 at Grenfell St) | The app follows the vehicle through the change — matched by position rather than stop ID, because an interchange is a dozen stops with different IDs |
 
 </details>
@@ -257,7 +277,7 @@ Most of the app's design came from poking at the real feeds rather than trusting
 App/          App entry, tab router, theme + shared formatting
 Data/
   GTFS/       Zip reader, ingest, SQLite schema + migrations, queries
-  Models/     Departure, LiveVehicle, StopSummary
+  Models/     Departure, LiveVehicle, StopSummary, Fleet
   Realtime/   Poll scheduler, protobuf decoding, HTML stripping, Merge
 Features/
   Map/        MKMapView bridge, stop sheet, trip detail, walk estimates
@@ -265,17 +285,20 @@ Features/
   Alerts/     Service alerts
   Settings/   Windows, thresholds, clock format
 Tests/        Swift Testing
+../scripts/   fleet_snapshot.py — builds the optional fleet snapshot
 ```
 
 </details>
 
 ## Privacy
 
-Your location never leaves your phone. It's used for centring the map, sorting stops by distance and estimating walk times — nothing else. There is no account, no backend, no analytics and no third-party SDK. The only network traffic is to Adelaide Metro's public feeds and to Apple for maps and walking directions.
+Your location never leaves your phone. It's used for centring the map, sorting stops by distance and estimating walk times — nothing else. There is no account, no backend, no analytics and no third-party SDK. The only network traffic is to Adelaide Metro's public feeds, to Apple for maps and walking directions, and to Wikimedia Commons when you open a bus's details and its photo loads.
 
 ## Data & licence
 
 Timetable and real-time data © Department for Infrastructure and Transport, South Australia, published as open GTFS feeds. This project is not affiliated with or endorsed by Adelaide Metro.
+
+Bus details come from the [Australian Bus Fleet Lists](https://fleetlists.busaustralia.com/), built locally and not redistributed here. Bus photos are from [Wikimedia Commons](https://commons.wikimedia.org/wiki/Category:Buses_in_Adelaide) under their own free licences (CC0, CC BY, CC BY-SA). The app shows each photographer and licence and links to the original.
 
 Code is MIT licensed — see [LICENSE](LICENSE).
 

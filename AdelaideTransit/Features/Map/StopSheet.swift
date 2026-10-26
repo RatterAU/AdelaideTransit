@@ -56,6 +56,7 @@ struct StopSheet: View {
                                 DepartureRow(
                                     departure: dep, isPast: true, walkSeconds: nil,
                                     vehicleLabel: vehicleLabel(for: dep),
+                                    occupancy: frame?.vehicles[dep.tripID]?.occupancy,
                                     hasVehicle: hasVehicle(for: dep)
                                 )
                             }
@@ -69,6 +70,7 @@ struct StopSheet: View {
                             departure: dep, isPast: false,
                             walkSeconds: walkSeconds, stopsAway: stopsAway(for: dep),
                             vehicleLabel: vehicleLabel(for: dep),
+                            occupancy: frame?.vehicles[dep.tripID]?.occupancy,
                             hasVehicle: hasVehicle(for: dep)
                         )
                     }
@@ -248,6 +250,8 @@ struct DepartureRow: View {
     /// Fleet number of the bus itself — the one thing that identifies the vehicle rather than the service,
     /// so you can tell which bus you're looking at when two of the same route are due together.
     var vehicleLabel: String? = nil
+    /// How full the bus is, when it reports it — a minority do.
+    var occupancy: Occupancy? = nil
     /// Whether a GPS position actually exists for this trip. Predicted times alone are realtime, but they are
     /// not a sighting of the bus — calling them "LIVE" next to an empty map is the claim the app can't back.
     var hasVehicle: Bool = false
@@ -300,6 +304,12 @@ struct DepartureRow: View {
                         Label(vehicleLabel, systemImage: "bus.fill")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
+                    }
+                    if let occupancy, !isPast {
+                        Image(systemName: occupancy.glyph)
+                            .font(.caption2)
+                            .foregroundStyle(occupancy.tint)
+                            .accessibilityLabel(occupancy.label)
                     }
                 }
                 .foregroundStyle(isPast ? .secondary : departure.state.tint)

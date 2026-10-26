@@ -186,6 +186,12 @@ actor RealtimeEngine {
     func start() {
         guard !started else { return }
         started = true
+        // Read here, not only pushed from Settings: Settings is the sole caller of the setters, so every
+        // launch polled at full rate — Data Saver on or not — until you happened to open that tab.
+        let defaults = UserDefaults.standard
+        dataSaver = defaults.bool(forKey: "dataSaverEnabled")
+        let scale = defaults.double(forKey: "refreshSpeedScale")
+        speedScale = scale > 0 ? scale : 1
         startMonitoringPath()
         startLoops()
     }
@@ -299,6 +305,8 @@ actor RealtimeEngine {
                 continue
             }
             let gotNewData = await poll(feed)
+            // Torn down mid-fetch by a restart: the replacement loop owns this feed's schedule now.
+            guard !Task.isCancelled else { return }
             let backoff = Self.backoff(failures: failures[feed] ?? 0)
             // Only the backoff survives a restart. Carrying the normal cadence too pinned a feed to the
             // *previous* screen's rate: warming trip_updates at 4 cycles on the map, then opening a stop,
@@ -368,7 +376,8 @@ actor RealtimeEngine {
                 bearing: vp.position.hasBearing ? Double(vp.position.bearing) : nil,
                 speedMS: vp.position.hasSpeed ? Double(vp.position.speed) : nil,
                 timestamp: vp.hasTimestamp ? Date(timeIntervalSince1970: TimeInterval(vp.timestamp)) : Date(),
-                currentStopSequence: vp.hasCurrentStopSequence ? vp.currentStopSequence : nil
+                currentStopSequence: vp.hasCurrentStopSequence ? vp.currentStopSequence : nil,
+                occupancy: vp.hasOccupancyStatus && vp.occupancyStatus != .noDataAvailable ? vp.occupancyStatus : nil
             )
         }
         vehicles = updated
@@ -477,7 +486,10 @@ actor RealtimeEngine {
         if let etag = etags[feed] { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }
         guard let (data, response) = try? await Self.session.data(for: request),
               let http = response as? HTTPURLResponse else {
-            failures[feed, default: 0] += 1
+            // A restart cancels the in-flight fetch, and every demand change is a restart. Counted as a
+            // failure, tapping through a few stops while trip_updates downloaded stacked a 3→6→12→24s
+            // backoff onto a healthy network, and the stop sheet sat without live times waiting it out.
+            if !Task.isCancelled { failures[feed, default: 0] += 1 }
             return nil
         }
         // 304 carries no body but is a success, not an outage — counting it as a failure would break

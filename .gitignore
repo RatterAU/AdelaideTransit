@@ -18,3 +18,7 @@ Package.resolved
 *.sqlite-wal
 *.sqlite-shm
 *.zip
+
+# Fleet snapshot — built locally by scripts/fleet_snapshot.py. The source list is for reference use
+# only, so it isn't republished here.
+AdelaideTransit/Resources/fleet.json

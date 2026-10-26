@@ -39,7 +39,9 @@ targets:
       - path: App
       - path: Data
       - path: Features
+      # Holds only the git-ignored fleet snapshot, so it is absent on a fresh clone.
       - path: Resources
+        optional: true
     dependencies:
       - package: GRDB
         product: GRDB

@@ -21,6 +21,7 @@ struct TripDetailSheet: View {
     @State private var flyTo: MKCoordinateRegion?
     @State private var flyToToken = UUID()
     @State private var showMap = false
+    @State private var showBusDetails = false
     @State private var ghostVehicle: LiveVehicle?
     /// Stop tapped on the mini map, previewed before it opens.
     @State private var previewStop: StopSummary?
@@ -356,10 +357,28 @@ struct TripDetailSheet: View {
             if let shownVehicle {
                 HStack(spacing: 12) {
                     if let label = shownVehicle.vehicleLabel {
-                        Label("Vehicle \(label)", systemImage: "bus.fill")
+                        // Tappable only when the snapshot knows the bus — trams and trains share the label field.
+                        Button {
+                            withAnimation(.snappy) { showBusDetails.toggle() }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Label("Vehicle \(label)", systemImage: "bus.fill")
+                                if Fleet.bus(label) != nil {
+                                    Image(systemName: showBusDetails ? "chevron.up" : "chevron.down")
+                                        .font(.caption2)
+                                }
+                            }
                             .font(.subheadline).bold()
                             .padding(.horizontal, 10).padding(.vertical, 5)
                             .background(.thinMaterial, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(Fleet.bus(label) == nil)
+                    }
+                    if let occupancy = shownVehicle.occupancy {
+                        Label(occupancy.label, systemImage: occupancy.glyph)
+                            .font(.caption).bold()
+                            .foregroundStyle(occupancy.tint)
                     }
                     Spacer()
                     if let kmh = shownVehicle.speedKMH {
@@ -374,6 +393,10 @@ struct TripDetailSheet: View {
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
+                }
+                if showBusDetails, let label = shownVehicle.vehicleLabel, let bus = Fleet.bus(label) {
+                    BusDetailsCard(fleetNumber: label, bus: bus)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                 }
                 // The position is real but it is not on *this* route yet: without saying so, a marker sitting
                 // three suburbs off the line reads as a bug rather than as the bus finishing its last run.

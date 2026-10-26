@@ -436,13 +436,28 @@ actor GTFSStore {
             for row in try Row.fetchAll(db, sql: "SELECT id, short_name, long_name, color, type FROM routes") {
                 result[row["id"]] = (
                     shortName: row["short_name"] ?? "", longName: row["long_name"] ?? "",
-                    color: row["color"], type: row["type"]
+                    color: row["color"], type: Self.baseRouteType(row["type"])
                 )
             }
             return result
         }
         allRoutesCache = result
         return result
+    }
+
+    /// Folds the extended (Google) route types back onto the basic GTFS ones every consumer switches on.
+    /// Adelaide publishes 701 for 155 bus routes and 712 for 164 school routes beside plain 3 (measured
+    /// 2026-10-26), so `type == 3` missed 319 bus routes: "Hide buses" left school buses on the map, the
+    /// Alerts "Bus" filter dropped their alerts and Settings filed them under "Other".
+    static func baseRouteType(_ type: Int) -> Int {
+        switch type {
+        case 100...199: return 2   // railway
+        case 200...299, 700...799: return 3   // coach, bus
+        case 400...499: return 1   // urban rail / metro
+        case 900...999: return 0   // tram
+        case 1000...1099, 1200...1299: return 4   // water, ferry
+        default: return type
+        }
     }
 
     /// Every word of the query has to appear somewhere in the stop, in any order, and the *ranking* happens in

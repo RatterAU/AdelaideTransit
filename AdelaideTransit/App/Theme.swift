@@ -195,3 +195,37 @@ extension TrackingState {
         }
     }
 }
+
+extension Occupancy {
+    var label: String {
+        switch self {
+        case .empty: return "Empty"
+        case .manySeatsAvailable: return "Many seats"
+        case .fewSeatsAvailable: return "Few seats"
+        case .standingRoomOnly: return "Standing room"
+        case .crushedStandingRoomOnly: return "Very crowded"
+        case .full: return "Full"
+        case .notAcceptingPassengers, .notBoardable: return "Not boarding"
+        case .noDataAvailable: return "No crowding data"
+        }
+    }
+
+    /// Filled people for how full it is — readable at caption size without the label.
+    var glyph: String {
+        switch self {
+        case .empty, .manySeatsAvailable: return "person"
+        case .fewSeatsAvailable: return "person.2"
+        case .standingRoomOnly, .crushedStandingRoomOnly: return "person.3"
+        case .full, .notAcceptingPassengers, .notBoardable, .noDataAvailable: return "person.3.fill"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .empty, .manySeatsAvailable: return .green
+        case .fewSeatsAvailable: return .orange
+        case .standingRoomOnly, .crushedStandingRoomOnly, .full, .notAcceptingPassengers, .notBoardable: return .red
+        case .noDataAvailable: return .secondary
+        }
+    }
+}

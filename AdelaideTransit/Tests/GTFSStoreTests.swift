@@ -357,3 +357,14 @@ struct GTFSStoreTests {
         #expect(thinned.first?.id == "10001")
     }
 }
+
+struct RouteTypeTests {
+    /// Adelaide's school (712) and regional (701) buses must read as buses, and basic types pass through.
+    @Test func extendedRouteTypesFoldOntoBasicOnes() {
+        #expect(GTFSStore.baseRouteType(701) == 3)
+        #expect(GTFSStore.baseRouteType(712) == 3)
+        #expect(GTFSStore.baseRouteType(900) == 0)
+        #expect(GTFSStore.baseRouteType(109) == 2)
+        for basic in [0, 2, 3, 4] { #expect(GTFSStore.baseRouteType(basic) == basic) }
+    }
+}
