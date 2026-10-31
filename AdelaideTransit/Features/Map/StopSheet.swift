@@ -17,67 +17,32 @@ struct StopSheet: View {
     /// Same interval the favourites list reloads on: the schedule query is cheap, re-running it on every 15s
     /// frame is not, and a query this old is a few tail rows behind at worst.
     private static let scheduleReloadInterval: TimeInterval = 5 * 60
+    /// Countdowns read in minutes, so the publish cycle is plenty.
+    private static let countdownTick: TimeInterval = 15
     @AppStorage("pastDeparturesWindowMinutes") private var pastWindowMinutes: Double = 30
     @AppStorage("departureWindowHours") private var departureWindowHours: Double = 2
     @AppStorage("hapticsEnabled") private var haptics = true
 
     /// Merged and split in one pass. As three separate computed properties the whole group-merge-sort ran
     /// three times per render — once for the list and once for each of `upcoming` and `past`.
-    private var split: (upcoming: [Departure], past: [Departure]) {
+    private func split(now: Date) -> (upcoming: [Departure], past: [Departure]) {
         let merged = Dictionary(grouping: departures, by: \.tripID)
             .flatMap { tripID, rows in Merge.mergeDepartures(rows, tripID: tripID, frame: frame) }
             .sorted { $0.displayTime < $1.displayTime }
         // Already sorted by time, so the first future departure is the split point.
-        let now = Date()
         let boundary = merged.firstIndex { $0.displayTime >= now } ?? merged.endIndex
         return (Array(merged[boundary...]), Array(merged[..<boundary]))
     }
 
     var body: some View {
-        let (upcoming, past) = split
-        return VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
-            List {
-                if !past.isEmpty {
-                    Button {
-                        withAnimation(.snappy) { showPast.toggle() }
-                    } label: {
-                        Label(
-                            showPast ? "Hide earlier departures" : "Show departures from the last \(Int(pastWindowMinutes)) min",
-                            systemImage: showPast ? "chevron.up" : "chevron.down"
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    }
-                    if showPast {
-                        ForEach(past) { dep in
-                            Button { onSelectTrip(dep.tripID) } label: {
-                                DepartureRow(
-                                    departure: dep, isPast: true, walkSeconds: nil,
-                                    vehicleLabel: vehicleLabel(for: dep),
-                                    occupancy: frame?.vehicles[dep.tripID]?.occupancy,
-                                    hasVehicle: hasVehicle(for: dep)
-                                )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-                ForEach(upcoming) { dep in
-                    Button { onSelectTrip(dep.tripID) } label: {
-                        DepartureRow(
-                            departure: dep, isPast: false,
-                            walkSeconds: walkSeconds, stopsAway: stopsAway(for: dep),
-                            vehicleLabel: vehicleLabel(for: dep),
-                            occupancy: frame?.vehicles[dep.tripID]?.occupancy,
-                            hasVehicle: hasVehicle(for: dep)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
+            // Frames re-render this every 15s, but only while they arrive. On the tick it keeps counting
+            // and keeps filing gone buses under "earlier" with no signal at all.
+            TimelineView(.periodic(from: .now, by: Self.countdownTick)) { context in
+                departureList(now: context.date)
             }
-            .listStyle(.plain)
         }
         // Keyed on the stop. `.sheet(item:)` swaps content in place without changing view identity, so a
         // plain `.task` did not re-run when you tapped a second stop — the new stop's sheet was listing the
@@ -91,6 +56,50 @@ struct StopSheet: View {
             guard Date.now.timeIntervalSince(departuresLoadedAt) > Self.scheduleReloadInterval else { return }
             await load()
         }
+    }
+
+    private func departureList(now: Date) -> some View {
+        let (upcoming, past) = split(now: now)
+        return List {
+            if !past.isEmpty {
+                Button {
+                    withAnimation(.snappy) { showPast.toggle() }
+                } label: {
+                    Label(
+                        showPast ? "Hide earlier departures" : "Show departures from the last \(Int(pastWindowMinutes)) min",
+                        systemImage: showPast ? "chevron.up" : "chevron.down"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                if showPast {
+                    ForEach(past) { dep in
+                        Button { onSelectTrip(dep.tripID) } label: {
+                            DepartureRow(
+                                departure: dep, isPast: true, now: now, walkSeconds: nil,
+                                vehicleLabel: vehicleLabel(for: dep),
+                                occupancy: frame?.vehicles[dep.tripID]?.occupancy,
+                                hasVehicle: hasVehicle(for: dep)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            ForEach(upcoming) { dep in
+                Button { onSelectTrip(dep.tripID) } label: {
+                    DepartureRow(
+                        departure: dep, isPast: false, now: now,
+                        walkSeconds: walkSeconds, stopsAway: stopsAway(for: dep),
+                        vehicleLabel: vehicleLabel(for: dep),
+                        occupancy: frame?.vehicles[dep.tripID]?.occupancy,
+                        hasVehicle: hasVehicle(for: dep)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .listStyle(.plain)
     }
 
     /// Whether we can say anything at all about GPS for this trip. With *no* vehicles in the whole feed we
@@ -243,6 +252,9 @@ struct StopSheet: View {
 struct DepartureRow: View {
     let departure: Departure
     var isPast: Bool = false
+    /// The tick this row was built on. Passed in, not read from the clock: with nothing else changed SwiftUI
+    /// can skip the body entirely, and the countdown with it.
+    var now: Date = .now
     /// Time needed to reach this stop on foot, when the user's location is known.
     var walkSeconds: TimeInterval? = nil
     /// Stops between the bus's last reported position and this one, when it's being tracked.
@@ -267,7 +279,7 @@ struct DepartureRow: View {
         guard let walkSeconds, !isPast, departure.state != .cancelled else { return .comfortable }
         return walkVerdict(
             walkSeconds: walkSeconds,
-            secondsUntilDeparture: departure.displayTime.timeIntervalSinceNow
+            secondsUntilDeparture: departure.displayTime.timeIntervalSince(now)
         )
     }
 
@@ -335,7 +347,7 @@ struct DepartureRow: View {
 
             VStack(alignment: .trailing, spacing: 1) {
                 // Past: how long ago it left, over the actual clock time it left at. Future: countdown over time.
-                Text(isPast ? agoText : countdownText(to: departure.displayTime))
+                Text(isPast ? agoText : countdownText(to: departure.displayTime, now: now))
                     .monospacedDigit()
                     .contentTransition(.numericText())
                 Text(clockText)
@@ -365,7 +377,7 @@ struct DepartureRow: View {
 
     /// "5 min ago" for a departure that's already left, against its actual departure time.
     private var agoText: String {
-        let minutes = Int(Date().timeIntervalSince(departure.displayTime) / 60)
+        let minutes = Int(now.timeIntervalSince(departure.displayTime) / 60)
         return minutes <= 0 ? "just now" : "\(minutes) min ago"
     }
 }

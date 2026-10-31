@@ -330,6 +330,33 @@ struct MergeTests {
         #expect(merged[0].displayTime <= ts)
     }
 
+    /// 492 trips end where they start, so stop S1 is both sequence 1 and 999. Once the bus has left, only the
+    /// 999 update carries that `stop_id`, and an unbounded `stop_id` search gave it to the passed sequence 1:
+    /// boundary dragged back to the first stop, every stop behind the bus un-passed and showing invented times
+    /// (trip 1135817 un-passed 139 stops on the live feed).
+    @Test func aLoopTripsFirstStopDoesNotClaimItsFinalStopsPrediction() {
+        let ts = midnight.addingTimeInterval(3000)
+        let rows = [
+            departure(seq: 1, offset: 0, base: midnight, stopID: "S1"),
+            departure(seq: 2, offset: 600, base: midnight),
+            departure(seq: 3, offset: 3000, base: midnight),
+            departure(seq: 999, offset: 3600, base: midnight, stopID: "S1")
+        ]
+        let f = frame(predictions: ["T1": [
+            3: Prediction(stopID: "S3", arrival: midnight.addingTimeInterval(3060), departure: nil, delay: nil, scheduleRelationship: .scheduled),
+            999: Prediction(stopID: "S1", arrival: midnight.addingTimeInterval(3660), departure: nil, delay: nil, scheduleRelationship: .scheduled)
+        ]], timestamp: ts)
+        let merged = Merge.mergeDepartures(rows, tripID: "T1", frame: f)
+
+        #expect(Merge.busStopSequence(tripID: "T1", frame: f, among: rows) == 3)
+        #expect(merged[0].displayTime <= ts)                          // passed, not an hour late
+        #expect(merged[1].displayTime <= ts)
+        // Two-sided: the final visit still owns its own prediction.
+        #expect(merged[3].displayTime == midnight.addingTimeInterval(3660))
+        #expect(Merge.stopsAway(for: rows[0], frame: f) == nil)       // behind the bus
+        #expect(Merge.stopsAway(for: rows[3], frame: f) == 1)
+    }
+
     /// Stops away is a count of remaining stops, not a difference of sequence numbers: static sequences skip
     /// numbers on 26534 of 26535 trips, so subtracting them overstated how far back the bus was.
     @Test func stopsAwayCountsRemainingStopsNotSequenceGaps() {
@@ -376,6 +403,16 @@ struct MergeTests {
             #expect(AdelaideTZ.calendar.component(.hour, from: eightAM) == 8)
             #expect(AdelaideTZ.calendar.component(.day, from: eightAM) == day)
         }
+    }
+
+    /// A wide departure window lists the first morning buses late at night. Without tomorrow as a candidate
+    /// a 05:00 trip opened at 23:30 landed on today's 05:00, 18 hours in the past.
+    @Test func earlyMorningTripOpenedLateAtNightResolvesToTomorrow() {
+        let now = AdelaideTZ.startOfDay(Date()).addingTimeInterval(23.5 * 3600)
+        let resolved = Merge.serviceDate(firstDeparture: 5 * 3600, now: now)
+        let tomorrow = AdelaideTZ.startOfDay(AdelaideTZ.calendar.date(byAdding: .day, value: 1, to: now)!)
+        #expect(resolved == tomorrow)
+        #expect(resolved.addingTimeInterval(5 * 3600) > now)
     }
 
     @Test func middayTripResolvesToToday() {

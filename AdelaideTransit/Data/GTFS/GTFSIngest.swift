@@ -169,7 +169,13 @@ enum GTFSIngest {
     /// `service_id` — which real GTFS exports do — would otherwise raise a primary-key violation out of
     /// here and fail the *whole* rebuild, so one duplicated row upstream would mean the app never took
     /// another timetable update. Last row wins; the alternative is no timetable at all.
-    static func ingest(zipURL: URL, intoDatabaseAt dbURL: URL, meta: FeedMetadata) throws {
+    ///
+    /// `isCancelled` is polled per row by the two big tables and throws `CancellationError`, rolling back. A
+    /// closure rather than `Task.isCancelled` because the row loops run inside GRDB's `write`, on its queue,
+    /// and because iOS suspends an app that has run out of background time whether or not this has finished.
+    static func ingest(
+        zipURL: URL, intoDatabaseAt dbURL: URL, meta: FeedMetadata, isCancelled: () -> Bool = { false }
+    ) throws {
         // Sidecars too: deleting only the database leaves the previous attempt's `-wal`/`-shm` beside the
         // new file, where SQLite tries to associate them with it.
         for suffix in ["", "-wal", "-shm"] {
@@ -189,8 +195,8 @@ enum GTFSIngest {
         try ingestStops(zip, dbQueue)
         try ingestRoutes(zip, dbQueue)
         try ingestTrips(zip, dbQueue)
-        try ingestStopTimes(zip, dbQueue)
-        try ingestShapes(zip, dbQueue)
+        try ingestStopTimes(zip, dbQueue, isCancelled)
+        try ingestShapes(zip, dbQueue, isCancelled)
         try ingestCalendar(zip, dbQueue)
         try ingestCalendarDates(zip, dbQueue)
         try dbQueue.write { db in try Schema.recomputeStopImportance(db) }
@@ -235,7 +241,8 @@ enum GTFSIngest {
                 // thrown straight out of `ingest` — so one odd stop wouldn't cost you that stop, it would
                 // fail *every* timetable update from then on. Skipping it costs only its map pin: the stop
                 // is already in `stops`, so its departures, its favourite and its trips all still work.
-                guard Int64(id) != nil else { continue }
+                // Canonical form only: `stopsIn` joins on the key cast back to text, which "0123" wouldn't match.
+                guard let key = Int64(id), String(key) == id else { continue }
                 try rtreeStmt.execute(arguments: [id, lat, lat, lon, lon])
             }
         }
@@ -274,11 +281,12 @@ enum GTFSIngest {
         }
     }
 
-    private static func ingestStopTimes(_ zip: ZipReader, _ dbQueue: DatabaseQueue) throws {
+    private static func ingestStopTimes(_ zip: ZipReader, _ dbQueue: DatabaseQueue, _ isCancelled: () -> Bool) throws {
         var csv = CSVReader(bytes: try zip.extract("stop_times.txt"))
         try dbQueue.write { db in
             let stmt = try db.makeStatement(sql: "INSERT INTO stop_times(trip_id, seq, stop_id, arr, dep) VALUES (?, ?, ?, ?, ?)")
             while let row = csv.next() {
+                guard !isCancelled() else { throw CancellationError() }
                 let tripID = csv[row, "trip_id"]
                 guard !tripID.isEmpty else { continue }
                 // GTFS allows either time to be blank at a non-timepoint stop, and each stands in for the
@@ -294,12 +302,13 @@ enum GTFSIngest {
         }
     }
 
-    private static func ingestShapes(_ zip: ZipReader, _ dbQueue: DatabaseQueue) throws {
+    private static func ingestShapes(_ zip: ZipReader, _ dbQueue: DatabaseQueue, _ isCancelled: () -> Bool) throws {
         guard let bytes = try? zip.extract("shapes.txt") else { return }
         var csv = CSVReader(bytes: bytes)
         try dbQueue.write { db in
             let stmt = try db.makeStatement(sql: "INSERT INTO shapes(shape_id, seq, lat, lon, dist) VALUES (?, ?, ?, ?, ?)")
             while let row = csv.next() {
+                guard !isCancelled() else { throw CancellationError() }
                 let shapeID = csv[row, "shape_id"]
                 guard !shapeID.isEmpty else { continue }
                 let distRaw = csv[row, "shape_dist_traveled"]

@@ -23,6 +23,9 @@ struct TripDetailSheet: View {
     @State private var showMap = false
     @State private var showBusDetails = false
     @State private var ghostVehicle: LiveVehicle?
+    /// Bumped by `rebuildGeometry` for the mini map. `applyVehicles` is gated on it, so left at its default
+    /// the marker froze at its first position and a bus with no fix on first render never appeared at all.
+    @State private var miniMapVehiclesVersion = 0
     /// Stop tapped on the mini map, previewed before it opens.
     @State private var previewStop: StopSummary?
     /// Where that stop's pin currently is inside the mini map, reported by the map view on every region change.
@@ -103,32 +106,39 @@ struct TripDetailSheet: View {
         return continuation.startsAtSameStop ? Array(merged.dropFirst()) : merged
     }
 
-    /// Stop sequence of the stop you came from, so the list can point at it.
-    private var originSequence: Int? {
+    /// Stop sequence of the stop you came from, so the list can point at it. On a trip that serves the stop
+    /// twice that is the visit still ahead of the bus: the first one, on a loop, is already behind it.
+    private func originSequence(among merged: [Departure]) -> Int? {
         guard let originStop else { return nil }
-        return stopTimes.first { $0.stopID == originStop.id }?.seq
+        let visits = merged.filter { $0.stopID == originStop.id }.map(\.stopSequence)
+        guard let bus = Merge.busStopSequence(tripID: tripID, frame: frame, among: merged) else { return visits.first }
+        return visits.first { $0 >= bus } ?? visits.first
     }
 
     /// Next stops onward only — once you're on the bus, where it's been is noise.
     ///
     /// Never trims past the stop you're waiting at, though: cutting the list at the bus's current position
     /// hid your own stop whenever the bus hadn't reached it yet, which is precisely when you're looking.
-    private var upcomingStops: [Departure] {
+    private func upcomingStops(in merged: [Departure], origin originSequence: Int?) -> [Departure] {
         let cutoff: Int?
-        if let busSeq = Merge.busStopSequence(tripID: tripID, frame: frame, among: mergedStops) {
+        if let busSeq = Merge.busStopSequence(tripID: tripID, frame: frame, among: merged) {
             cutoff = min(busSeq, originSequence ?? busSeq)
         } else if let originSequence {
             cutoff = originSequence
         } else {
             cutoff = nil
         }
-        guard let cutoff else { return mergedStops.filter { $0.displayTime >= Date() } }
-        return mergedStops.filter { $0.stopSequence >= cutoff }
+        guard let cutoff else { return merged.filter { $0.displayTime >= Date() } }
+        return merged.filter { $0.stopSequence >= cutoff }
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
+        // Merged once per render and handed down. As a computed property read by the list, the header and the
+        // preview card, the whole route was merged three times over for every frame and every detent drag.
+        let merged = mergedStops
+        let yourSeq = originSequence(among: merged)
+        return VStack(spacing: 0) {
+            header(merged, yourSeq: yourSeq)
             if trackingState == .ghost {
                 Label("No live tracking for this service — showing schedule", systemImage: "questionmark.circle")
                     .font(.caption)
@@ -148,14 +158,13 @@ struct TripDetailSheet: View {
             Divider()
 
             if showMap {
-                miniMap
+                miniMap(merged)
             } else {
                 // Hoisted once per render. As `upcomingStops.first` / `originSequence` inside the row builder
                 // they re-ran `Merge.mergeDepartures` over the whole route for every row — O(stops²) merges on
                 // each frame. The bus moves once per publish, not once per row.
-                let stops = upcomingStops
+                let stops = upcomingStops(in: merged, origin: yourSeq)
                 let nextSeq = stops.first?.stopSequence
-                let yourSeq = originSequence
                 let contStops = continuationStops
                 ScrollViewReader { proxy in
                     List {
@@ -211,7 +220,7 @@ struct TripDetailSheet: View {
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
                     // Land on your own stop rather than the top of a long route.
-                    .onChange(of: originSequence) { _, seq in
+                    .onChange(of: yourSeq) { _, seq in
                         guard let seq else { return }
                         proxy.scrollTo(seq, anchor: .center)
                     }
@@ -244,6 +253,7 @@ struct TripDetailSheet: View {
             at: vehicle?.coordinate ?? ghostVehicle?.coordinate,
             color: routeColor
         )
+        miniMapVehiclesVersion &+= 1
     }
 
     private func interpolatedGhost() -> LiveVehicle? {
@@ -261,20 +271,32 @@ struct TripDetailSheet: View {
         )
     }
 
-    private var miniMap: some View {
+    /// Keyed by the vehicle's route as well as this trip's: a bus still finishing its previous run reports
+    /// that run's route, which isn't in here otherwise, and its marker read "?". It carries this trip's
+    /// number because this is the service you're looking at it for.
+    private var miniMapRoutes: [String: RouteInfo] {
+        guard let info else { return [:] }
+        let route = RouteInfo(
+            shortName: info.shortName, color: routeColor, textColor: Theme.routeTextColor(info.color), type: 0
+        )
+        var routes = [info.routeID: route]
+        if let upstreamRoute = upstreamVehicle?.routeID { routes[upstreamRoute] = route }
+        return routes
+    }
+
+    private func miniMap(_ merged: [Departure]) -> some View {
         MapViewRepresentable(
             stops: routeStops,
             // Without this the version stays at its default and the stops, which start empty and arrive
             // asynchronously, would never be applied to the map at all.
             stopsVersion: routeStops.count,
             vehicles: shownVehicle.map { [$0] } ?? [],
+            vehiclesVersion: miniMapVehiclesVersion,
             // Suppressed once an upstream position is on screen: the interpolated ghost claims the bus is
             // partway along *this* route while the real one is still finishing the last, and drawing both
             // puts the same vehicle in two places.
             ghostVehicles: (upstreamVehicle == nil ? ghostVehicle : nil).map { [$0] } ?? [],
-            routes: info.map { [$0.routeID: RouteInfo(
-                shortName: $0.shortName, color: routeColor, textColor: Theme.routeTextColor($0.color), type: 0
-            )] } ?? [:],
+            routes: miniMapRoutes,
             userTrackingEnabled: true,
             routeLines: routeLines,
             flyTo: flyTo,
@@ -299,7 +321,7 @@ struct TripDetailSheet: View {
                     Color.clear
                         .frame(width: 1, height: 1)
                         .overlay(alignment: .bottom) {
-                            stopPreviewCard(previewStop).frame(width: Self.previewCardWidth)
+                            stopPreviewCard(previewStop, merged).frame(width: Self.previewCardWidth)
                         }
                         .position(
                             x: min(
@@ -316,7 +338,7 @@ struct TripDetailSheet: View {
 
     private static let previewCardWidth: CGFloat = 260
 
-    private var header: some View {
+    private func header(_ merged: [Departure], yourSeq: Int?) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
                 HStack {
@@ -347,7 +369,7 @@ struct TripDetailSheet: View {
                 // a countdown can't when you can see the traffic it's sitting in.
                 // Counted over the stops the feed still lists, not subtracted from sequence numbers: static
                 // sequences skip numbers on effectively every trip, so the subtraction overstated the gap.
-                if let origin = mergedStops.first(where: { $0.stopSequence == originSequence }),
+                if let origin = merged.first(where: { $0.stopSequence == yourSeq }),
                    let away = Merge.stopsAway(for: origin, frame: frame),
                    let text = stopsAwayText(away) {
                     Text("· \(text)").font(.caption).foregroundStyle(.secondary)
@@ -486,8 +508,8 @@ struct TripDetailSheet: View {
     /// What this bus does at a stop you tapped on the route: route, stop, when it gets there, how long that
     /// is. Opaque and app-styled on purpose — MapKit's own callout bubble is translucent and unstyleable,
     /// which over a map of coloured lines is barely readable.
-    private func stopPreviewCard(_ stop: StopSummary) -> some View {
-        let dep = mergedStops.first { $0.stopID == stop.id }
+    private func stopPreviewCard(_ stop: StopSummary, _ merged: [Departure]) -> some View {
+        let dep = merged.first { $0.stopID == stop.id }
         return HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {

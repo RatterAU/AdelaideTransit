@@ -190,7 +190,8 @@ actor GTFSStore {
         // A probe that failed (or a server that answers `HEAD` with nothing) leaves us about to record an
         // identity of nil against a database we did rebuild — which is what makes every later check see
         // "changed" and rebuild again. The download's own response carries the same headers; use them.
-        if newMeta.etag == nil && newMeta.lastModified == nil {
+        // A failed probe on a forced refresh holds the *old* identity rather than nil, which is the same trap.
+        if probe == nil || (newMeta.etag == nil && newMeta.lastModified == nil) {
             newMeta = downloadedMeta
         }
         try await installFeed(fromZipAt: stagingZipURL, meta: newMeta)
@@ -209,10 +210,23 @@ actor GTFSStore {
         // writing them — and called directly it held this actor's executor for all of it, so every query the
         // UI made was queued behind the rebuild. It touches only the staging file, which nothing else has
         // opened, so there is nothing here to serialise against.
+        //
+        // A detached task doesn't inherit cancellation, so the flag carries it: without this, a background
+        // task's expiry handler reached the download but never the ingest, which went on writing past the
+        // end of the app's background time and was suspended holding a lock in the shared container.
         let stagingURL = stagingDBURL
-        try await Task.detached(priority: .utility) {
-            try GTFSIngest.ingest(zipURL: zipURL, intoDatabaseAt: stagingURL, meta: meta)
-        }.value
+        let cancelled = OSAllocatedUnfairLock(initialState: false)
+        let ingest = Task.detached(priority: .utility) {
+            try GTFSIngest.ingest(
+                zipURL: zipURL, intoDatabaseAt: stagingURL, meta: meta,
+                isCancelled: { cancelled.withLock { $0 } }
+            )
+        }
+        try await withTaskCancellationHandler {
+            try await ingest.value
+        } onCancel: {
+            cancelled.withLock { $0 = true }
+        }
 
         try validateStagedDatabase(floors)
         try swapInStagedDatabase()
@@ -230,6 +244,9 @@ actor GTFSStore {
         var stops = 1_000
         var trips = 1_000
         var stopTimes = 100_000
+        /// `calendar.txt` and `calendar_dates.txt` are optional at the zip layer, so an archive without them
+        /// ingested happily into a timetable where no service ever runs.
+        var services = 1
         static let production = FeedFloors()
     }
 
@@ -244,14 +261,17 @@ actor GTFSStore {
         let counts = try staged.read { db in
             (stops: try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM stops") ?? 0,
              trips: try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM trips") ?? 0,
-             stopTimes: try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM stop_times") ?? 0)
+             stopTimes: try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM stop_times") ?? 0,
+             services: try Int.fetchOne(db, sql: """
+                SELECT (SELECT COUNT(*) FROM calendar) + (SELECT COUNT(*) FROM calendar_dates)
+                """) ?? 0)
         }
         try? staged.close() // see GTFSIngest.ingest — the file is moved and its sidecars deleted right after
         guard counts.stops >= floors.stops, counts.trips >= floors.trips,
-              counts.stopTimes >= floors.stopTimes else {
+              counts.stopTimes >= floors.stopTimes, counts.services >= floors.services else {
             try? FileManager.default.removeItem(at: stagingDBURL)
             throw StagedFeedRejected(
-                detail: "stops \(counts.stops), trips \(counts.trips), stop_times \(counts.stopTimes)"
+                detail: "stops \(counts.stops), trips \(counts.trips), stop_times \(counts.stopTimes), services \(counts.services)"
             )
         }
     }
@@ -397,6 +417,11 @@ actor GTFSStore {
         guard let dbQueue else { return [] }
         let bbox = "r.min_lat <= ? AND r.max_lat >= ? AND r.min_lon <= ? AND r.max_lon >= ?"
         let bounds: [any DatabaseValueConvertible] = [maxLat, minLat, maxLon, minLon]
+        // `CAST`, not `r.id = s.id`. Comparing an INTEGER key to a TEXT column applies numeric affinity to the
+        // text side, which rules out `stops`' index on it, so the planner walked all 9000-odd stops and probed
+        // the r-tree per stop. Cast the other way and it searches the r-tree first: 16.6 → 2.1 ms thinned,
+        // 7.4 → 0.04 ms at street zoom.
+        let join = "JOIN stops_rtree r ON CAST(r.id AS TEXT) = s.id"
 
         return try dbQueue.read { db in
             let rows: [Row]
@@ -405,7 +430,7 @@ actor GTFSStore {
                 // yields its best-connected stop rather than an arbitrary member.
                 rows = try Row.fetchAll(db, sql: """
                     SELECT s.id, s.code, s.name, s.lat, s.lon, MAX(s.importance) FROM stops s
-                    JOIN stops_rtree r ON r.id = s.id
+                    \(join)
                     WHERE \(bbox)
                     GROUP BY CAST(s.lat / ? AS INTEGER), CAST(s.lon / ? AS INTEGER)
                     LIMIT ?
@@ -413,7 +438,7 @@ actor GTFSStore {
             } else {
                 rows = try Row.fetchAll(db, sql: """
                     SELECT s.id, s.code, s.name, s.lat, s.lon FROM stops s
-                    JOIN stops_rtree r ON r.id = s.id
+                    \(join)
                     WHERE \(bbox)
                     LIMIT ?
                     """, arguments: StatementArguments(bounds + [limit]))
@@ -473,34 +498,33 @@ actor GTFSStore {
         var arguments = StatementArguments()
         for token in tokens { arguments += ["%\(token)%", "%\(token)%"] }
 
-        // The scan is unindexed either way — `LIKE '%…%'` can't use one — so the cap is only there to bound
-        // the ranking, not the scan. 300 is ten pages of results nobody scrolls, over 9171 stops.
+        // Uncapped: a `LIMIT` here runs in storage order, *before* the ranking below, so it is the old bug
+        // again one step removed — "main" matches 342 stops and "rd" 5452, and the one you're standing at
+        // could fall outside the first 300. The scan is unindexed either way, and `rank` caps the result.
         let candidates = try dbQueue.read { db in
             try Row.fetchAll(db, sql: """
                 SELECT id, code, name, lat, lon FROM stops
-                WHERE \(clause) LIMIT 300
+                WHERE \(clause)
                 """, arguments: arguments)
                 .map { StopSummary(id: $0["id"], code: $0["code"], name: $0["name"], lat: $0["lat"], lon: $0["lon"]) }
         }
         return StopSearch.rank(candidates, tokens: tokens, near: near)
     }
 
-    /// Scheduled departures at a stop within [from, from+window], across the two service-days
-    /// that can produce wall-clock times in that window (today's, and yesterday's after-midnight trips).
+    /// Scheduled departures at a stop within [from, from+window], across the three service-days that can
+    /// produce wall-clock times in that window: today's, yesterday's after-midnight trips, and tomorrow's
+    /// first buses, which a late-evening query with a wide window reaches into.
     func departures(stopID: String, from: Date, window: TimeInterval = 90 * 60) throws -> [Departure] {
         guard let dbQueue else { return [] }
         let to = from.addingTimeInterval(window)
 
         var results: [Departure] = []
-        for daysAgo in [0, 1] {
+        for daysAgo in [-1, 0, 1] {
             // Shift the *date* first, then anchor it. Anchoring first and subtracting a day is a day of
             // fixed length, which the changeover days aren't — and the anchor itself can land at 23:00 the
             // evening before, so the calendar lookup has to key off the day, not off the anchor.
             guard let day = AdelaideTZ.calendar.date(byAdding: .day, value: -daysAgo, to: from) else { continue }
             let serviceDate = AdelaideTZ.startOfDay(day)
-            let serviceIDs = try activeServiceIDs(on: day)
-            guard !serviceIDs.isEmpty else { continue }
-            let placeholders = databaseQuestionMarks(count: serviceIDs.count)
             // Bound the scan to the window in SQL. Without this every call read *every* departure of the
             // whole service day at this stop — the busiest stop is served by 62 routes — joined trips and
             // routes for all of them, then threw almost all of it away in Swift. `st_stop(stop_id, dep)`
@@ -509,6 +533,9 @@ actor GTFSStore {
             let lo = Int(from.timeIntervalSince(serviceDate).rounded(.down))
             let hi = Int(to.timeIntervalSince(serviceDate).rounded(.up))
             guard hi >= 0 else { continue }
+            let serviceIDs = try activeServiceIDs(on: day)
+            guard !serviceIDs.isEmpty else { continue }
+            let placeholders = databaseQuestionMarks(count: serviceIDs.count)
 
             let rows = try dbQueue.read { db in
                 try Row.fetchAll(db, sql: """

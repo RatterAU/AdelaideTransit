@@ -4,6 +4,8 @@ import CoreLocation
 struct FavouriteRow: View {
     let favourite: (id: Int64, stopID: String, stopName: String, routeID: String?, label: String?, group: String?, lat: Double, lon: Double)
     let departures: [Departure]
+    /// The tick this row was built on. Passed in so the chips can't be skipped as unchanged — see `DepartureRow`.
+    var now: Date = .now
     /// Straight-line metres from you, when a fix is available. Also what the list is ordered by.
     ///
     /// Deliberately not routed: routing is a throttled network request, and this list would fire one per
@@ -104,7 +106,9 @@ struct FavouriteRow: View {
     }
 
     private func minutesText(_ dep: Departure) -> String {
-        let minutes = Int(dep.displayTime.timeIntervalSinceNow / 60)
-        return minutes <= 0 ? "now" : "\(minutes)m"
+        // The same cut-offs as `countdownText`: flooring alone read "now" here at 59s while the stop's own
+        // list said "1 min" for the same bus.
+        let seconds = dep.displayTime.timeIntervalSince(now)
+        return seconds < 30 ? "now" : "\(max(1, Int(seconds / 60)))m"
     }
 }

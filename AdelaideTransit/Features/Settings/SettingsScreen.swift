@@ -58,7 +58,6 @@ struct SettingsScreen: View {
             Form {
                 Section("Realtime") {
                     Picker("Refresh interval", selection: $refreshSpeedScale) {
-                        Text("Fast").tag(0.5)
                         Text("Normal").tag(1.0)
                         Text("Relaxed").tag(2.0)
                     }
@@ -170,6 +169,7 @@ struct SettingsScreen: View {
         .task { await loadFeedInfo() }
         .task { allRoutes = (try? await store.allRoutes()) ?? [:] }
         .task {
+            if refreshSpeedScale < 1 { refreshSpeedScale = 1 } // the retired "Fast" has no row in the picker
             await engine.setSpeedScale(refreshSpeedScale)
             await engine.setDataSaver(dataSaverEnabled)
             // Nothing on this screen shows realtime data. Without this the engine kept whatever the previous

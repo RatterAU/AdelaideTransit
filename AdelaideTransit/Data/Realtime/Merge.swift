@@ -125,6 +125,11 @@ enum Merge {
                 ?? tripPredictions[UInt32(clamping: boundary)]?.time
         }
 
+        // Worked out once, not per row: a trip sheet merges the whole route on every frame, and answering this
+        // per passed stop was an array built and scanned for each, O(stops²) on the longest trips.
+        let rowsBelow = passedBoundary.map { boundary in departures.map(\.stopSequence).filter { $0 < boundary } } ?? []
+        let nearestBelow = rowsBelow.count > 1 ? rowsBelow.max() : nil
+
         return departures
             .sorted { $0.stopSequence < $1.stopSequence }
             .map { dep -> Departure in
@@ -155,7 +160,7 @@ enum Merge {
                 // sequences are non-contiguous on 26534 of 26535 trips, so `boundary - 1` is usually a stop
                 // number that doesn't exist and this case never fired at all.
                 if let passedBoundary, dep.stopSequence < passedBoundary,
-                   isDirectlyBelow(dep.stopSequence, boundary: passedBoundary, in: departures),
+                   isDirectlyBelow(dep.stopSequence, boundary: passedBoundary, nearestBelow: nearestBelow),
                    let ts = frame.headerTimestamp, dep.scheduledTime <= ts,
                    let nextTime = boundaryTime {
                     return restate(dep, .live, liveTime: min(nextTime, ts))
@@ -172,7 +177,7 @@ enum Merge {
                 // boundary (and the route line, which reads the same boundary) already shows as passed.
                 if let passedBoundary, dep.stopSequence < passedBoundary,
                    let ts = frame.headerTimestamp,
-                   dep.scheduledTime <= ts || !isDirectlyBelow(dep.stopSequence, boundary: passedBoundary, in: departures) {
+                   dep.scheduledTime <= ts || !isDirectlyBelow(dep.stopSequence, boundary: passedBoundary, nearestBelow: nearestBelow) {
                     return restate(dep, .live, liveTime: min(dep.scheduledTime, ts))
                 }
 
@@ -201,6 +206,11 @@ enum Merge {
     ///
     /// The sequence still gets first say when it agrees with the stop, which is the common case and the only
     /// way to tell apart the 542 trips that serve the same stop twice; ties there go to the nearer sequence.
+    ///
+    /// The `stop_id` search only reaches `maxPublishedShift`. Unbounded, it found the *other visit* on a trip
+    /// that serves a stop twice: on the 492 loops that end where they start, a passed sequence 1 matched the
+    /// final stop's 999, which dragged the boundary back to stop 1 and un-passed the whole route (6 of 346
+    /// running trips, measured 2026-10-31), with invented times on every stop behind the bus.
     static func prediction(for dep: Departure, in preds: [UInt32: Prediction]) -> Prediction? {
         if let byPosition = preds[UInt32(clamping: dep.stopSequence)],
            byPosition.stopID.isEmpty || byPosition.stopID == dep.stopID {
@@ -208,18 +218,21 @@ enum Merge {
         }
         guard !dep.stopID.isEmpty else { return nil }
         return preds
-            .filter { $0.value.stopID == dep.stopID }
+            .filter { $0.value.stopID == dep.stopID && abs(Int($0.key) - dep.stopSequence) <= maxPublishedShift }
             .min { abs(Int($0.key) - dep.stopSequence) < abs(Int($1.key) - dep.stopSequence) }?
             .value
     }
+
+    /// How far a published `stop_sequence` strays from `stop_times.txt`: 219 of 219 shifted updates were off by
+    /// exactly one (measured 2026-10-31).
+    private static let maxPublishedShift = 1
 
     /// Whether this stop is the one immediately before the boundary among the stops we were handed. Static
     /// sequences skip numbers on effectively every trip, so `boundary - 1` is not "the previous stop".
     /// With a single stop's rows (a stop sheet) there is no previous stop in the list, and the caller's
     /// `< boundary` test has already established it is behind the bus.
-    private static func isDirectlyBelow(_ sequence: Int, boundary: Int, in departures: [Departure]) -> Bool {
-        let below = departures.map(\.stopSequence).filter { $0 < boundary }
-        if below.count > 1, let nearest = below.max() { return sequence == nearest }
+    private static func isDirectlyBelow(_ sequence: Int, boundary: Int, nearestBelow: Int?) -> Bool {
+        if let nearestBelow { return sequence == nearestBelow }
         // A stop sheet passes one stop's rows, so there are no neighbours to compare against: fall back to
         // sequence adjacency, which errs toward "departed" for a stop several numbers back — the reading that
         // matches the route line rather than contradicting it.
@@ -291,17 +304,20 @@ enum Merge {
 
     /// Which service day a trip belongs to. GTFS departure times are seconds from service midnight and run
     /// past 24h, so a "00:40" trip is yesterday's service still running — pick whichever midnight puts the
-    /// first departure closest to now.
+    /// first departure closest to now. Tomorrow is a candidate too: a wide departure window lists the first
+    /// morning buses late at night, and those read as ~19 h in the past against today's midnight.
     static func serviceDate(firstDeparture: Int, now: Date) -> Date {
         let today = AdelaideTZ.startOfDay(now)
-        // A day back from `now`, then anchored — not a day back from the anchor. On a daylight-saving
-        // changeover the two differ by an hour, which is a whole trip's worth of wrong times.
-        guard let yesterday = AdelaideTZ.calendar.date(byAdding: .day, value: -1, to: now)
-            .map(AdelaideTZ.startOfDay) else { return today }
+        // A day off `now`, then anchored — not a day off the anchor. On a daylight-saving changeover the two
+        // differ by an hour, which is a whole trip's worth of wrong times.
+        let neighbours = [-1, 1].compactMap {
+            AdelaideTZ.calendar.date(byAdding: .day, value: $0, to: now).map(AdelaideTZ.startOfDay)
+        }
         let distance = { (midnight: Date) in
             abs(midnight.addingTimeInterval(TimeInterval(firstDeparture)).timeIntervalSince(now))
         }
-        return distance(yesterday) < distance(today) ? yesterday : today
+        // Today first, so a tie stays on today.
+        return ([today] + neighbours).min { distance($0) < distance($1) } ?? today
     }
 
     /// Interpolated position for a ghost trip: where it *should* be right now, from the static schedule + shape.

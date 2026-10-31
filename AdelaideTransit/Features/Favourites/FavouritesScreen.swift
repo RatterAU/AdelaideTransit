@@ -20,6 +20,8 @@ struct FavouritesScreen: View {
     /// The schedule query itself is cheap; re-running it on every 15s frame is not, and the timetable a
     /// query behind is at most a few minutes of tail rows.
     private static let scheduleReloadInterval: TimeInterval = 5 * 60
+    /// Countdowns read in minutes, so the publish cycle is plenty.
+    private static let countdownTick: TimeInterval = 15
 
     /// Nearest first. This is a live read of `locationManager.lastLocation`, which is `@Observable`, so the
     /// order re-resolves whenever a fix lands — including every time you come back to this tab — without a
@@ -54,27 +56,33 @@ struct FavouritesScreen: View {
                 if favourites.isEmpty {
                     emptyState
                 } else {
-                    List {
-                        ForEach(grouped(by: distances), id: \.key) { section in
-                            Section(section.key) {
-                                ForEach(section.items, id: \.id) { fav in
-                                    FavouriteRow(
-                                        favourite: fav,
-                                        departures: mergedDepartures(for: fav),
-                                        distance: distances[fav.id],
-                                        alert: closure(for: fav),
-                                        windowHours: departureWindowHours,
-                                        onTap: { openOnMap(fav) },
-                                        onRename: { newLabel in Task { await rename(fav, to: newLabel) } }
-                                    )
-                                    .swipeActions {
-                                        Button("Delete", role: .destructive) {
-                                            Task { await delete(fav) }
+                    // On a tick as well as on frames: with no network there are no frames, and a list merged
+                    // only on arrival sat frozen, buses long gone still reading "3m".
+                    TimelineView(.periodic(from: .now, by: Self.countdownTick)) { context in
+                        List {
+                            ForEach(grouped(by: distances), id: \.key) { section in
+                                Section(section.key) {
+                                    ForEach(section.items, id: \.id) { fav in
+                                        FavouriteRow(
+                                            favourite: fav,
+                                            departures: mergedDepartures(for: fav, now: context.date),
+                                            now: context.date,
+                                            distance: distances[fav.id],
+                                            alert: closure(for: fav),
+                                            windowHours: departureWindowHours,
+                                            onTap: { openOnMap(fav) },
+                                            onRename: { newLabel in Task { await rename(fav, to: newLabel) } }
+                                        )
+                                        .swipeActions {
+                                            Button("Delete", role: .destructive) {
+                                                Task { await delete(fav) }
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
+                        .overlay(alignment: .bottomLeading) { staleBadge(now: context.date) }
                     }
                 }
             }
@@ -92,6 +100,16 @@ struct FavouritesScreen: View {
         }
     }
 
+    /// Only once the data has gone stale. Times that stopped updating still read "LIVE", and unlike the map
+    /// this screen had nothing else to say so; the badge has no business here while everything is working.
+    @ViewBuilder
+    private func staleBadge(now: Date) -> some View {
+        if let published = lastFrame?.headerTimestamp,
+           now.timeIntervalSince(published) > GhostCutoffs.staleAfter {
+            DataAgeBadge(timestamp: published).padding()
+        }
+    }
+
     private var emptyState: some View {
         VStack(spacing: 12) {
             Image(systemName: "star").font(.system(size: 40)).foregroundStyle(.secondary)
@@ -101,7 +119,7 @@ struct FavouritesScreen: View {
         }
     }
 
-    private func mergedDepartures(for fav: Favourite) -> [Departure] {
+    private func mergedDepartures(for fav: Favourite, now: Date) -> [Departure] {
         let rows = departuresByStop[fav.stopID] ?? []
         let filtered = fav.routeID == nil ? rows : rows.filter { $0.routeID == fav.routeID }
         // Drop what has already gone. The rows are fetched once and merged against every frame, so without
@@ -109,10 +127,9 @@ struct FavouritesScreen: View {
         // clamps a negative countdown to "now", so they read as three buses about to leave.
         // No grace period: `StopSheet.split` boundaries on `now` exactly, and a minute of slack here meant the
         // preview's first row was a bus the stop's own list filed under "earlier departures".
-        let cutoff = Date.now
         return Dictionary(grouping: filtered, by: \.tripID)
             .flatMap { tripID, group in Merge.mergeDepartures(group, tripID: tripID, frame: lastFrame) }
-            .filter { $0.displayTime >= cutoff }
+            .filter { $0.displayTime >= now }
             .sorted { $0.displayTime < $1.displayTime }
     }
 

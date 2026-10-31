@@ -78,6 +78,39 @@ struct GTFSStoreTests {
         #expect(try await store.feedInfo().etag == "v1")
     }
 
+    /// Calendars are optional at the zip layer, so the row-count floors alone let through a timetable where
+    /// no service ever runs — every departure list empty until Adelaide Metro next published.
+    @Test func aFeedWithNoServiceCalendarIsRefused() async throws {
+        let (store, directory) = try await makeStore()
+        defer { remove(directory) }
+
+        var noCalendar = GTFSFixture.standard()
+        noCalendar.files["calendar.txt"] = nil
+        noCalendar.files["calendar_dates.txt"] = nil
+        let zip = try noCalendar.write(into: directory, named: "no-calendar.zip")
+        await #expect(throws: GTFSStore.StagedFeedRejected.self) {
+            try await store.installFeed(
+                fromZipAt: zip, meta: .init(etag: "v2", lastModified: nil), floors: Self.fixtureFloors
+            )
+        }
+        #expect(try await store.feedInfo().etag == "v1")
+    }
+
+    /// What a background task's expiry reaches. Throwing, not returning: an abandoned ingest must not go on
+    /// to validate and swap in a half-built file.
+    @Test func aCancelledIngestThrowsRatherThanFinishing() throws {
+        let directory = try GTFSFixture.makeDirectory()
+        defer { remove(directory) }
+
+        let zip = try GTFSFixture.standard().write(into: directory)
+        #expect(throws: CancellationError.self) {
+            try GTFSIngest.ingest(
+                zipURL: zip, intoDatabaseAt: directory.appendingPathComponent("staged.sqlite"),
+                meta: .init(etag: nil, lastModified: nil), isCancelled: { true }
+            )
+        }
+    }
+
     /// The whole reason favourites live in their own file.
     @Test func favouritesSurviveAFullTimetableReplacement() async throws {
         let (store, directory) = try await makeStore()
@@ -182,6 +215,25 @@ struct GTFSStoreTests {
         #expect(parts.day == 12 && parts.hour == 1 && parts.minute == 10)
     }
 
+    /// Late in the evening a wide window runs into tomorrow's service day. Only today's and yesterday's were
+    /// queried, so at the 8 h setting the first buses of the morning were missing from 20:20 onward.
+    @Test func aLateEveningWindowReachesTomorrowsFirstBuses() async throws {
+        let (store, directory) = try await makeStore()
+        defer { remove(directory) }
+
+        let tenPM = AdelaideTZ.calendar.date(from: DateComponents(
+            timeZone: AdelaideTZ.timeZone, year: 2025, month: 6, day: 11, hour: 22, minute: 0
+        ))!
+        // Reaches 09:30 on the 12th: T502's 09:00 and not TDEPOT's 09:50, so the window still owns the edge.
+        let departures = try await store.departures(stopID: "10003", from: tenPM, window: 11.5 * 3600)
+        #expect(departures.map(\.tripID) == ["T502"])
+
+        let parts = AdelaideTZ.calendar.dateComponents(
+            [.day, .hour], from: try #require(departures.first?.scheduledTime)
+        )
+        #expect(parts.day == 12 && parts.hour == 9)
+    }
+
     /// `calendar_dates` exception_type 2 removes a service on one date even though `calendar` runs it every
     /// day. Both directions, because a filter that drops everything also passes this test one-sided.
     @Test func aCalendarExceptionSuppressesItsServiceOnThatDayOnly() async throws {
@@ -244,6 +296,36 @@ struct GTFSStoreTests {
         // 10001 is served by both R502 and (via TLATE) R502 again plus RTRAM — two distinct routes, more
         // than any other stop in the fixture.
         #expect(thinned.first?.id == "10001")
+    }
+
+    /// The r-tree key is cast back to text to join `stops`, so "0123" can't find itself. It loses its pin, as
+    /// a non-numeric id does, and nothing else: the join must not pull it in as stop 123, or lose the stop.
+    @Test func aNonCanonicalStopIDLosesOnlyItsMapPin() async throws {
+        var fixture = GTFSFixture.standard()
+        fixture.files["stops.txt", default: ""] += "010007,X7,Leading Zero,-34.92355,138.60150\n"
+        let (store, directory) = try await makeStore(fixture)
+        defer { remove(directory) }
+
+        let pins = try await store.stopsIn(minLat: -35, maxLat: -34.8, minLon: 138.5, maxLon: 138.8)
+        #expect(!pins.contains { $0.id == "010007" })
+        #expect(pins.contains { $0.id == "10001" })
+        #expect(try await store.stopSummary(id: "010007")?.name == "Leading Zero")
+    }
+
+    /// A `LIMIT` in the SQL ran in storage order, before the ranking, so a common word dropped arbitrary
+    /// stops: "main" matches 342 and the nearest could be one of the 42. Stored last here for that reason.
+    @Test func searchRanksEveryMatchBeforeCapping() async throws {
+        var fixture = GTFSFixture.standard()
+        for i in 0..<350 {
+            let lat = i == 349 ? -34.9 : -35.5
+            fixture.files["stops.txt", default: ""] += "\(20000 + i),M\(i),Main Rd - Stop \(i),\(lat),138.6\n"
+        }
+        let (store, directory) = try await makeStore(fixture)
+        defer { remove(directory) }
+
+        let hits = try await store.searchStops(matching: "main", near: (lat: -34.9, lon: 138.6))
+        #expect(hits.first?.id == "20349")
+        #expect(hits.count == 30)
     }
 
     @Test func stopSummaryFindsAStopByID() async throws {

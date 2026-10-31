@@ -83,6 +83,7 @@ struct MapScreen: View {
     /// against the real 9171-stop feed (versus an unbounded 4900+ before thinning existed); 24 trades some
     /// of that headroom back for stops appearing at a wider zoom, which is the whole point of the number.
     /// Cells scale with the square, so this is roughly 1.8x the annotations — re-measure if you raise it.
+    /// Re-measured 2026-10-31: 229 on screen at peak, 541 held across the padded box — see `gridCell`.
     private static let stopsAcrossViewport = 24
     /// Below this span nothing is thinned at all. Raised from 0.02: the old boundary meant you had to zoom
     /// in further than felt natural before a specific stop reappeared.
@@ -231,7 +232,12 @@ struct MapScreen: View {
                     Task { await loadStops(in: region) }
                 },
                 onSelectStop: { stop in showStop(stop) },
-                onSelectVehicle: { tripID in showTrip(tripID) }
+                // A bus tapped on the map has no boarding stop. Left set, the stop a previous trip was opened
+                // from came back as "YOUR STOP" on this one, and widened its list and its framing to match.
+                onSelectVehicle: { tripID in
+                    tripOriginStop = nil
+                    showTrip(tripID)
+                }
             )
             .ignoresSafeArea()
 
@@ -530,6 +536,9 @@ struct MapScreen: View {
     /// Quantising matters as much as the grid itself: a continuously-varying cell size would re-tier on
     /// every pinch frame, changing which stop each cell selects and churning annotations throughout the
     /// gesture. Snapping to octaves means a zoom crosses a tier boundary occasionally, not constantly.
+    ///
+    /// Up, never to nearest: nearest could land a cell at 0.7× the target, doubling the stops per area and
+    /// taking the on-screen peak to 358 at 24 across. Up holds it at 229 against the real feed.
     private func gridCell(for span: Double) -> Double {
         // Close in, the whole viewport holds only a few dozen stops, so show every one — thinning here
         // would drop the second stop of an opposite-sides-of-the-road pair, which is exactly the pair
@@ -537,7 +546,7 @@ struct MapScreen: View {
         guard span >= Self.thinningThresholdSpan else { return 0 }
         let target = span / Double(Self.stopsAcrossViewport)
         guard target > 0 else { return 0 }
-        return pow(2, log2(target).rounded())
+        return pow(2, log2(target).rounded(.up))
     }
 
     /// Fetches a box padded well beyond the viewport and reuses it until you pan outside it or change zoom
@@ -597,7 +606,7 @@ struct MapScreen: View {
     }
 }
 
-private struct DataAgeBadge: View {
+struct DataAgeBadge: View {
     let timestamp: Date
 
     var body: some View {

@@ -29,9 +29,18 @@ struct PollScheduleTests {
 
     @Test func retriesQuicklyWhenAlreadyPastTheExpectedPublish() {
         let delay = PollSchedule.nextDelay(
-            lastHeader: now.addingTimeInterval(-60), cycle: cycle, multiplier: 1, gotNewData: false, now: now
+            lastHeader: now.addingTimeInterval(-25), cycle: cycle, multiplier: 1, gotNewData: false, now: now
         )
         #expect(delay == PollSchedule.missRetry)
+    }
+
+    /// A stalled publisher answers 200 with the same header, so it never counts as a failure. The chase has
+    /// to give up on its own, or that is a full payload every 3s for as long as the stall lasts.
+    @Test func theChaseGivesUpAfterOneCycleOfAStalledPublisher() {
+        let delay = PollSchedule.nextDelay(
+            lastHeader: now.addingTimeInterval(-60), cycle: cycle, multiplier: 1, gotNewData: false, now: now
+        )
+        #expect(delay == cycle)
     }
 
     @Test func multiplierStretchesTheCycleForWarmAndSaverModes() {
@@ -70,26 +79,45 @@ struct PollScheduleTests {
 
     @Test func learnsTheRealCadenceFromConsecutivePublishes() {
         let learned = PollSchedule.learnedCycle(
-            previous: 15, lastHeader: now, newHeader: now.addingTimeInterval(20), multiplier: 1
+            previous: 15, lastHeader: now, newHeader: now.addingTimeInterval(20), multiplier: 1, chased: true
         )
         #expect(learned == 20)
+    }
+
+    /// The ratchet. The map warms trip_updates every 4th cycle; open a stop and the next sample is at
+    /// multiplier 1 but its gap spans cycles it never saw. Learned as the cadence, polling on it sees that
+    /// same gap again and a 15s feed stays on 45s for the session.
+    @Test func aLongGapThatNothingPinnedIsNotTheCadence() {
+        let learned = PollSchedule.learnedCycle(
+            previous: 15, lastHeader: now, newHeader: now.addingTimeInterval(45), multiplier: 1, chased: false
+        )
+        #expect(learned == 15)
+    }
+
+    /// Two-sided: a shorter gap can't be an artefact of sampling late, so it needs no chase to be believed —
+    /// which is also what walks a slowed estimate back down.
+    @Test func aShorterGapIsAlwaysLearned() {
+        let learned = PollSchedule.learnedCycle(
+            previous: 45, lastHeader: now, newHeader: now.addingTimeInterval(15), multiplier: 1, chased: false
+        )
+        #expect(learned == 15)
     }
 
     /// The trap this guard exists for: a feed polled every 4th cycle sees 60s gaps. Learning from those
     /// would ratchet the cadence slower on every pass until it stopped being live at all.
     @Test func doesNotLearnWhileDeliberatelySkippingCycles() {
         let learned = PollSchedule.learnedCycle(
-            previous: 15, lastHeader: now, newHeader: now.addingTimeInterval(60), multiplier: 4
+            previous: 15, lastHeader: now, newHeader: now.addingTimeInterval(60), multiplier: 4, chased: true
         )
         #expect(learned == 15)
     }
 
     @Test func ignoresImplausibleGaps() {
         let tooLong = PollSchedule.learnedCycle(
-            previous: 15, lastHeader: now, newHeader: now.addingTimeInterval(3600), multiplier: 1
+            previous: 15, lastHeader: now, newHeader: now.addingTimeInterval(3600), multiplier: 1, chased: true
         )
         let tooShort = PollSchedule.learnedCycle(
-            previous: 15, lastHeader: now, newHeader: now.addingTimeInterval(0.5), multiplier: 1
+            previous: 15, lastHeader: now, newHeader: now.addingTimeInterval(0.5), multiplier: 1, chased: true
         )
         #expect(tooLong == 15)
         #expect(tooShort == 15)
@@ -97,7 +125,7 @@ struct PollScheduleTests {
 
     @Test func keepsPreviousValueWithNoHistory() {
         let learned = PollSchedule.learnedCycle(
-            previous: 15, lastHeader: nil, newHeader: now, multiplier: 1
+            previous: 15, lastHeader: nil, newHeader: now, multiplier: 1, chased: true
         )
         #expect(learned == 15)
     }

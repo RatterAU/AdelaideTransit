@@ -21,19 +21,28 @@ enum PollSchedule {
             return gotNewData ? span : missRetry
         }
         let delay = lastHeader.addingTimeInterval(span + publishLag).timeIntervalSince(now)
-        // Already past the expected publish: chase it with a short retry rather than idling a whole cycle.
-        return delay > 0 ? delay : missRetry
+        if delay > 0 { return delay }
+        // Already past the expected publish: chase it with a short retry rather than idling a whole cycle —
+        // but only for one cycle. A stalled publisher answers 200 with the same header, which is no failure,
+        // so nothing else slows this down and an uncapped chase was a full payload every 3s, indefinitely.
+        return -delay < span ? missRetry : span
     }
 
     /// Learn the source's real cadence from the gap between consecutive publish timestamps.
     /// Only valid when sampling every cycle — a deliberately slowed feed would otherwise learn its own
     /// skip rate and slow further on each pass.
+    ///
+    /// A gap only ever bounds the cadence from above: publishes can have gone by unseen in the middle of it.
+    /// So a shorter gap is always proof, and a longer one counts only when `chased` — the poll before this
+    /// one saw the old header again, which pins the publish between the two. Without that, the first sample
+    /// after the map's 4-cycle warm rate or a failed poll read 45s as "the cadence", and polling on that
+    /// schedule then saw 45s gaps forever: a stop sheet on minute-old times, on a healthy 15s feed.
     static func learnedCycle(
-        previous: TimeInterval, lastHeader: Date?, newHeader: Date, multiplier: Double
+        previous: TimeInterval, lastHeader: Date?, newHeader: Date, multiplier: Double, chased: Bool
     ) -> TimeInterval {
         guard multiplier <= 1.0, let lastHeader else { return previous }
         let delta = newHeader.timeIntervalSince(lastHeader)
-        guard delta >= minCycle, delta <= maxCycle else { return previous }
+        guard delta >= minCycle, delta <= maxCycle, chased || delta < previous else { return previous }
         return delta
     }
 }
@@ -127,6 +136,8 @@ actor RealtimeEngine {
     /// When a failing feed is next allowed to hit the network. Survives a loop restart, which the backoff
     /// otherwise didn't — see `loop`. Nil while the feed is healthy.
     private var nextAttempt: [Feed: Date] = [:]
+    /// Feeds whose last poll answered with the header already held. See `PollSchedule.learnedCycle`.
+    private var chasing: Set<Feed> = []
 
     private enum Endpoint {
         static let tripUpdates = URL(string: "https://gtfs.adelaidemetro.com.au/v1/realtime/trip_updates")!
@@ -176,7 +187,8 @@ actor RealtimeEngine {
         startLoops()
     }
 
-    /// 0.5 = Fast, 1.0 = Normal, 2.0 = Relaxed — user-selectable in Settings.
+    /// 1.0 = Normal, 2.0 = Relaxed — user-selectable in Settings. There is no faster setting on purpose: the
+    /// source publishes every 15s, so sub-cycle polling tripled the downloads and gained about 1.5s.
     func setSpeedScale(_ scale: TimeInterval) {
         guard scale != speedScale else { return }
         speedScale = scale
@@ -191,7 +203,7 @@ actor RealtimeEngine {
         let defaults = UserDefaults.standard
         dataSaver = defaults.bool(forKey: "dataSaverEnabled")
         let scale = defaults.double(forKey: "refreshSpeedScale")
-        speedScale = scale > 0 ? scale : 1
+        speedScale = max(1, scale) // 0 is unset; 0.5 is the retired "Fast"
         startMonitoringPath()
         startLoops()
     }
@@ -201,6 +213,7 @@ actor RealtimeEngine {
     /// left to wake up later and poll again on a stale schedule.
     private func startLoops() {
         for task in loopTasks { task.cancel() }
+        chasing = []
         loopTasks = Feed.allCases.map { feed in
             Task { await self.loop(feed) }
         }
@@ -307,6 +320,7 @@ actor RealtimeEngine {
             let gotNewData = await poll(feed)
             // Torn down mid-fetch by a restart: the replacement loop owns this feed's schedule now.
             guard !Task.isCancelled else { return }
+            if !gotNewData && (failures[feed] ?? 0) == 0 { chasing.insert(feed) } else { chasing.remove(feed) }
             let backoff = Self.backoff(failures: failures[feed] ?? 0)
             // Only the backoff survives a restart. Carrying the normal cadence too pinned a feed to the
             // *previous* screen's rate: warming trip_updates at 4 cycles on the map, then opening a stop,
@@ -340,7 +354,8 @@ actor RealtimeEngine {
             previous: learnedCycle[feed] ?? Self.defaultPublishCycle,
             lastHeader: lastHeaderDate[feed],
             newHeader: date,
-            multiplier: multiplier
+            multiplier: multiplier,
+            chased: chasing.contains(feed)
         )
         lastHeaderDate[feed] = date
     }

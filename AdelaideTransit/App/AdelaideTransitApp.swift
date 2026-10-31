@@ -1,5 +1,6 @@
 import SwiftUI
 import BackgroundTasks
+import UIKit
 
 private let refreshTaskID = "com.adelaidetransit.app.refresh"
 private let lastRefreshCheckDayKey = "lastTimetableCheckDay"
@@ -43,8 +44,12 @@ final class AppBootstrap {
             return // hot path: existing db, no network needed to become interactive
         }
         isDownloading = true
+        let grace = BackgroundGrace()
+        defer { grace.end() }
+        let download = Task { try await store.refreshIfNeeded() }
+        grace.onExpiry = { download.cancel() }
         do {
-            try await store.refreshIfNeeded()
+            _ = try await download.value
             isReady = await store.isReady
         } catch {
             errorMessage = error.localizedDescription
@@ -55,6 +60,28 @@ final class AppBootstrap {
     func retry(store: GTFSStore) async {
         errorMessage = nil
         await start(store: store)
+    }
+}
+
+/// Keeps a timetable refresh alive after the app leaves the foreground.
+///
+/// Downloading and rebuilding takes tens of seconds and "check the bus, lock the phone" takes ten. Without
+/// this the app was suspended mid-ingest, holding a SQLite lock in the shared container (which iOS kills an
+/// app for, `0xdead10cc`), and every short session spent the 15 MB again without ever landing the update.
+/// Ends on `end()`, not on expiry: `onExpiry` cancels the work, and the work ending is what ends this.
+@MainActor
+private final class BackgroundGrace {
+    var onExpiry: (() -> Void)?
+    private var id = UIBackgroundTaskIdentifier.invalid
+
+    init() {
+        id = UIApplication.shared.beginBackgroundTask(withName: "timetable-refresh") { [self] in onExpiry?() }
+    }
+
+    func end() {
+        guard id != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(id)
+        id = .invalid
     }
 }
 
@@ -125,7 +152,9 @@ struct AdelaideTransitApp: App {
         let defaults = UserDefaults.standard
         guard defaults.string(forKey: lastRefreshCheckDayKey) != today else { return }
 
-        Task.detached(priority: .utility) {
+        let grace = BackgroundGrace()
+        let refresh = Task.detached(priority: .utility) {
+            defer { Task { await grace.end() } }
             let allowCellular = defaults.bool(forKey: "allowCellularUpdates")
             // The day is marked only once the server has actually answered. Marking up front and clearing it
             // on `throw` covered the loud failures but not the quiet ones: a failed `HEAD` probe and an
@@ -135,6 +164,7 @@ struct AdelaideTransitApp: App {
                   outcome != .deferred else { return }
             defaults.set(today, forKey: lastRefreshCheckDayKey)
         }
+        grace.onExpiry = { refresh.cancel() }
     }
 }
 

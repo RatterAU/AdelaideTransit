@@ -36,6 +36,10 @@ final class LocationManager: NSObject, @preconcurrency CLLocationManagerDelegate
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        lastLocation = locations.last?.coordinate
+        // Core Location opens with its cached fix, which can be hours and suburbs old, and a negative accuracy
+        // means no fix at all. Taken at face value the first one spent auto-centre, which only fires once.
+        guard let fix = locations.last, fix.horizontalAccuracy >= 0,
+              fix.timestamp.timeIntervalSinceNow > -60 else { return }
+        lastLocation = fix.coordinate
     }
 }
