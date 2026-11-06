@@ -35,6 +35,7 @@ targets:
       # declare UIRequiresFullScreen. This is a personal iPhone app, so the rule simply doesn't apply —
       # which beats opting out of multitasking on an iPad build nobody installs.
       TARGETED_DEVICE_FAMILY: "1"
+      ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     sources:
       - path: App
       - path: Data
