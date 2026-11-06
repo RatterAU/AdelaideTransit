@@ -99,9 +99,111 @@ So I built it. It's a personal project — one person, no company behind it, no 
 
 ## Install it
 
-There's no App Store listing — publishing needs a paid Apple developer account and this is a free side project. You install it by building it yourself, which takes about ten minutes and costs nothing.
+There's no App Store listing. Publishing needs a paid Apple developer account and this is a free side project. There are two ways to put it on an iPhone (iOS 26 or newer), both free:
 
-### What you need first
+- **[LiveContainer + SideStore](#option-a-livecontainer--sidestore)**: any computer, used once. After that you install and update from the phone, and the app doesn't take one of the 3 app slots a free Apple ID gets (LiveContainer takes one, once).
+- **[Xcode](#option-b-build-it-with-xcode)**: needs a Mac. You build it yourself in about ten minutes, and re-run it from Xcode every 7 days.
+
+### Option A: LiveContainer + SideStore
+
+You need a computer (Mac, Windows or Linux) and a USB cable once, to put LiveContainer on the phone. After that, everything happens on the phone. Already have LiveContainer working? Skip to [Install AdelaideTransit](#install-adelaidetransit).
+
+> [!WARNING]
+> **Never delete LiveContainer to "fix" it.** Every app inside it, and all their data, is deleted with it. If it stops opening, reinstall it over the top (see [Keep it working](#keep-it-working)).
+
+#### Part 1: Put LiveContainer+SideStore on the phone
+
+1. On the computer, download the latest **[iloader](https://github.com/nab138/iloader/releases/latest)**. Older versions can't sign LiveContainer properly.
+2. Plug the iPhone in, unlock it, and tap **Trust** if asked.
+3. Open iloader, sign in with your Apple ID (a free one is fine, and the password is case-sensitive), and pick your iPhone.
+4. Choose **LiveContainer+SideStore**, and pick the **Nightly** build. As of November 2026 the stable build's SideStore closes itself when you try to sign in.
+5. On the iPhone: **Settings → General → VPN & Device Management →** your Apple ID **→ Trust**.
+6. Still in Settings: **Privacy & Security → Developer Mode → On**. The phone restarts. Confirm with your passcode.
+
+iloader then tells you to import a certificate and refresh. Don't yet: that only works after Parts 2 and 3.
+
+#### Part 2: Make a pairing file
+
+SideStore needs a *pairing file* to talk to the phone. **Use idevice_pair, not iloader's pairing file.** iloader's file holds two kinds of pairing at once, and SideStore rejects it with *"The pairing file format is ambiguous"*.
+
+1. On the computer, download **[idevice_pair](https://github.com/jkcoxson/idevice_pair/releases/latest)**.
+2. Keep the iPhone plugged in and unlocked, and pick it in idevice_pair.
+3. Choose **Remote Pairing**. Not Lockdown: it imports, but refreshing fails later with *"Broken Pipe"*.
+4. Click **Create** (it stays grey while the phone is locked), then save the file.
+5. AirDrop it to the iPhone and choose **Save to Files**.
+
+> [!CAUTION]
+> The pairing file lets a device control your iPhone. Don't share it, and delete the copy on your computer once Part 3 is done.
+
+#### Part 3: Set up SideStore
+
+1. Install **LocalDevVPN** from the App Store and tap **Connect**. SideStore can only sign and refresh while it's connected.
+2. Open LiveContainer and tap the **SideStore** button at the top left.
+3. When it asks for a pairing file, tap **Select Pairing File** and pick the file from Part 2.
+4. **Before you sign in**, open SideStore's **Settings** and:
+   - turn **On-Device Anisette** off,
+   - set the anisette server to **SideStore (New)**,
+   - tap **Reset adi.pb**.
+5. Force-close LiveContainer (swipe it away), open it again, go back into SideStore, and sign in with the same Apple ID you used in iloader.
+
+Skip step 4 and sign-in usually crashes or fails.
+
+#### Part 4: Refresh, then import the certificate
+
+1. With LocalDevVPN connected, go to SideStore's **My Apps** and tap **Refresh All**. Only **LiveContainer** is listed. That's right: SideStore and every app you add live inside it, so refreshing LiveContainer keeps all of them alive. If it asks to revoke a certificate, tap **Yes**.
+2. Force-close LiveContainer and open it again.
+3. In LiveContainer's **Settings**, tap **Import Certificate from SideStore**, then **OK**. It worked when the button changes to **Remove Certificate**.
+
+#### Install AdelaideTransit
+
+1. Copy this link:
+
+   ```
+   https://github.com/RatterAU/AdelaideTransit/releases/latest/download/AdelaideTransit.ipa
+   ```
+
+2. Open LiveContainer, tap **+** at the top right of *My Apps*, choose **Install from URL**, paste the link, and tap **OK**.
+3. Tap **AdelaideTransit** to open it. The first launch downloads the whole timetable (~20 MB), so give it a minute on Wi-Fi.
+
+> [!IMPORTANT]
+> **Don't AirDrop the `.ipa` to your phone.** iOS tries to install it as an ordinary app, leaves a grey icon on the home screen that won't open, and never saves the file. Use the link above instead. If you must move a file over, zip it first; a `.zip` is saved to Files.
+
+> [!TIP]
+> **Updating:** do the same again with the same link, which always points to the newest version. LiveContainer replaces the old one and keeps your settings.
+
+#### Keep it working
+
+A free Apple ID only signs apps for **7 days**, and that includes LiveContainer.
+
+- **Refresh every 3–4 days:** connect LocalDevVPN, open SideStore inside LiveContainer, **My Apps → Refresh All**. Check the counter goes back to 7 days. To automate it, make a Shortcuts automation that connects LocalDevVPN, waits a few seconds, runs LiveContainer's **Refresh All Apps** action, then disconnects.
+- **If a refresh made a new certificate**, import it again (**Settings → Import Certificate from SideStore**). Otherwise the apps inside won't open, even though LiveContainer does.
+- **Write down the date you ran iloader.** There's a [known bug](https://github.com/LiveContainer/LiveContainer/issues/1243) where LiveContainer still expires 7 days after that, even though SideStore said it refreshed.
+- **If LiveContainer won't open:** plug the phone in and run iloader again with the same Apple ID and the same build. It installs over the top and your apps survive. Then repeat Part 4.
+
+<details>
+<summary><b>If something goes wrong</b></summary>
+
+<br>
+
+| Problem | Fix |
+|:--|:--|
+| SideStore closes the moment you sign in | You're on the stable build, or skipped Part 3 step 4. Install the Nightly with iloader over the top, then do Part 3 |
+| No **User Customizations** or anisette settings in SideStore | Same: that's the stable build. Use the Nightly |
+| *"The pairing file format is ambiguous"* | That's iloader's pairing file. Make one with idevice_pair (Part 2) |
+| Can't tap **Continue** on SideStore's pairing file screen | It needs a file selected first. **Set Up Later** works too, but nothing refreshes until you add one |
+| *"Broken Pipe"* when refreshing | The pairing file is Lockdown. Make a **Remote Pairing** one |
+| Refresh fails or hangs | Connect LocalDevVPN first |
+| *"Certificate not found, did you log into built-in SideStore?"* | Sign in to SideStore first (Part 3). Or in SideStore **Settings → Export Signing Certificate...**, then LiveContainer **Settings → Import Certificate** |
+| LiveContainer opens but AdelaideTransit won't | Re-import the certificate (Part 4, step 3). **Settings → JIT-Less Mode Diagnose** shows whether it's set up |
+| LiveContainer won't open at all | Its 7 days ran out. Run iloader again, over the top. Don't delete it |
+| Grey home-screen icon after AirDropping the `.ipa` | iOS tried to install it as a normal app. Delete that icon and use **Install from URL** instead |
+
+</details>
+
+
+### Option B: Build it with Xcode
+
+#### What you need first
 
 | | |
 |:--|:--|
@@ -110,7 +212,7 @@ There's no App Store listing — publishing needs a paid Apple developer account
 | **An iPhone on iOS 26** | Plus its USB cable, for the first install |
 | **An Apple ID** | The free one you already have is fine. No paid developer account needed |
 
-### Step 1 — Get the code
+#### Step 1 — Get the code
 
 Open **Terminal** and paste this in, one block:
 
@@ -119,7 +221,7 @@ git clone https://github.com/RatterAU/AdelaideTransit.git
 cd AdelaideTransit/AdelaideTransit
 ```
 
-### Step 2 — Generate the Xcode project
+#### Step 2 — Generate the Xcode project
 
 The `.xcodeproj` isn't stored in this repo — it's generated from `project.yml`, so it has to be built once:
 
@@ -147,7 +249,7 @@ Skip it and the app works exactly the same, minus the bus-details card. Re-run i
 
 </details>
 
-### Step 3 — Tell Xcode it's yours
+#### Step 3 — Tell Xcode it's yours
 
 Xcode is now open. In the left sidebar click the blue **AdelaideTransit** project icon at the very top, then:
 
@@ -158,7 +260,7 @@ Xcode is now open. In the left sidebar click the blue **AdelaideTransit** projec
 
 <sub>Step 4 matters: bundle IDs are global, so the default one won't be available to your account.</sub>
 
-### Step 4 — Run it on your phone
+#### Step 4 — Run it on your phone
 
 1. Plug your iPhone in and unlock it. Tap **Trust** if asked
 2. In Xcode's toolbar, click the device dropdown (next to the app name) and pick your iPhone
@@ -166,7 +268,7 @@ Xcode is now open. In the left sidebar click the blue **AdelaideTransit** projec
 
 The first build takes a few minutes.
 
-### Step 5 — Trust the app on your iPhone
+#### Step 5 — Trust the app on your iPhone
 
 The first launch will fail with *"Untrusted Developer"*. That's expected. On your iPhone:
 
@@ -190,6 +292,7 @@ Open the app again and it works.
 | `xcodegen: command not found` | `brew install xcodegen`, then reopen Terminal |
 | *"Failed to register bundle identifier"* | Someone already used that bundle ID. Change it to something more unique in Signing & Capabilities |
 | *"Untrusted Developer"* on launch | Step 5 above — the trust setting on the iPhone |
+| *"Developer Mode required"* on launch | **Settings → Privacy & Security → Developer Mode → On**, then let the phone restart |
 | App won't open after a week | Expected on a free account. Rebuild with ⌘R |
 | Xcode offers to *"Update to recommended settings"* | Decline. Project settings live in `project.yml`, and accepting makes the prompt come back forever |
 | Build errors after you add a file | Run `xcodegen generate` again |
