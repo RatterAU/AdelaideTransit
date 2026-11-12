@@ -60,11 +60,13 @@ So I built it. It's a personal project — one person, no company behind it, no 
 
 **See where the bus actually is.** Every tracked vehicle on the network appears on the map as its route number with a heading arrow, sliding between GPS updates. Tap one and you follow it: its speed, how many seconds ago it reported, and every stop still ahead of it.
 
-**Know which bus it is.** Tap the vehicle number on a trip and it opens up: rego, chassis and body, when it was built and how old it is, seats, depot, operator and its history. There's a photo too — of that exact bus when one exists on Wikimedia Commons, otherwise one of the same model, and the caption tells you which. Where a bus reports how full it is, you'll see that as well: on the trip, and as a small icon on its departure row.
+**Know which bus it is.** *(Built-from-source only — see [below](#option-b-build-it-with-xcode).)* Tap the vehicle number on a trip and it opens up: rego, chassis and body, when it was built and how old it is, seats, depot, operator and its history. There's a photo too — of that exact bus when one exists on Wikimedia Commons, otherwise one of the same model, and the caption tells you which. Where a bus reports how full it is, you'll see that as well: on the trip, and as a small icon on its departure row.
 
 **Know if you'll make it.** Each departure shows a countdown *and* a clock time, because "5 min" and "4:21 pm" answer different questions. If you're too far away to catch it on foot, the app says so plainly instead of letting you jog for nothing.
 
-**Know when it's late.** Delays come from the live feed and are colour-coded: on time, running early, running late. If a bus is recovering from a delay, the number counts down with it rather than freezing on a stale figure.
+**Know when it's late.** Delays come from the live feed and are colour-coded: on time, running early, running late. If a bus is recovering from a delay, the number counts down with it rather than freezing on a stale figure. A bus just past its predicted time but still on its way reads **Due**; one that has passed your stop reads **Departed**, even if it ran early. When live times stop arriving, the screen says how old they are instead of quietly showing them as live.
+
+**Only buses you can catch.** A stop's list leaves out services that *end* there or only let people off there — at a terminus like Adelaide Railway Station that used to be half the board.
 
 **Your stops first.** The app opens on the stops you've starred, sorted by how close you are, re-sorting as you move. Each shows the next three departures, so most of the time you're done before you've tapped anything.
 
@@ -155,6 +157,8 @@ Skip step 4 and sign-in usually crashes or fails.
 3. In LiveContainer's **Settings**, tap **Import Certificate from SideStore**, then **OK**. It worked when the button changes to **Remove Certificate**.
 
 #### Install AdelaideTransit
+
+The [latest release](https://github.com/RatterAU/AdelaideTransit/releases/latest) has one file, `AdelaideTransit.ipa`: an unsigned build that LiveContainer signs when it installs it. It has everything except the bus-details card (rego, model, photo), whose data can't be redistributed. [Build it yourself](#option-b-build-it-with-xcode) to get that too. There is no Android version.
 
 1. Copy this link:
 
@@ -309,13 +313,13 @@ xcodebuild -project AdelaideTransit.xcodeproj -scheme AdelaideTransit \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
 ```
 
-114 tests, Swift Testing (one skips without the fleet snapshot). `project.yml` is the source of truth for the project — run `xcodegen generate` after adding any file, and never hand-edit the `.xcodeproj`.
+139 tests, Swift Testing (one skips without the fleet snapshot). `project.yml` is the source of truth for the project — run `xcodegen generate` after adding any file, and never hand-edit the `.xcodeproj`.
 
 </details>
 
 ## Under the hood
 
-Two feeds, one junction. The timetable arrives once a day as a big ZIP and goes into local SQLite. The live picture arrives every 15 seconds as three protobuf feeds. They're combined in exactly one place, `Merge`, which is pure code with tests around it — no view ever does this arithmetic itself.
+Two feeds, one junction. The timetable arrives once a day as a big ZIP and goes into local SQLite. The live picture arrives as three protobuf feeds: bus positions every 15 seconds, arrival predictions about once a minute. They're combined in exactly one place, `Merge`, which is pure code with tests around it — no view ever does this arithmetic itself.
 
 ```mermaid
 flowchart LR
@@ -348,8 +352,11 @@ Most of the app's design came from poking at the real feeds rather than trusting
 
 | What's actually true | What the app does about it |
 |:--|:--|
-| The feed publishes every **15 seconds** and is readable ~5 s after its own timestamp. Polling faster returns byte-identical data | The poller locks onto the feed's own clock instead of ticking on its own schedule, so a refresh lands just after new data exists |
-| **No `ETag`, no `Last-Modified`**, and gzip is ignored — every poll is a full, uncompressed download | Pre-fetching happens only on unconstrained Wi-Fi, never on cellular or Low Data |
+| **Each feed has its own clock**: positions every 15 seconds, predictions every ~60 (it was 15 until late 2026), readable 1–8.5 s after their timestamp. Polling faster returns byte-identical data | The poller learns each feed's cadence and locks onto its clock, so a refresh lands just after new data exists — and doesn't re-download the same minute of predictions seven times |
+| **No `ETag`, no `Last-Modified`**, and gzip is ignored — but `Range` requests work, and the timestamp is in the first few bytes | Before downloading a feed it already holds, the app reads its first 256 bytes and stops there if nothing changed. Pre-fetching happens only on unconstrained Wi-Fi, never on cellular or Low Data |
+| **A terminus lists every service ending there** — 829 of 1,657 rows at Adelaide Railway Station; 4,363 timetable rows are drop-off only | Neither is shown as a departure |
+| **A stop drops out of the feed once the bus has passed it** — including when it passes *ahead* of schedule, which 72 of 893 passed stops were | That drop is what says "Departed", not the timetable clock. A stop still listed past its predicted minute reads "Due" — 44 of 529 were still coming a minute later |
+| **The alerts feed stamps itself ~10.5 hours in the future**, and splits each bounded alert into a start-only and an end-only period | The app schedules alert refreshes off its own clock, and reads the split pair as one window — so "Until" dates show and finished alerts drop off |
 | **Nothing reports which stop a bus is at** — 0 of 627 vehicles carry that field | Position is inferred from which stops have dropped out of the trip's update list: the lowest one still published *is* where the bus is. Held for 790 of 792 trips over five minutes |
 | **Predicted arrival times are absolute, and a delay figure is never sent** — 14,098 out of 14,098 | Delay is computed, and stops without their own prediction are interpolated between the nearest known ones. That's what lets a recovering bus tick 6 min late → 3, instead of freezing |
 | **Crowding is reported by only a few buses** — none until recently, 26 of 413 when last measured | Shown where a bus reports it, and nowhere else. No guesses for the rest |
