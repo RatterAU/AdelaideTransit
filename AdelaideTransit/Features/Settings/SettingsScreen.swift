@@ -140,7 +140,12 @@ struct SettingsScreen: View {
 
                 Section("Timetable data") {
                     LabeledContent("Feed version", value: feedETag ?? "—")
-                    LabeledContent("Last checked", value: feedIngestedAt ?? "—")
+                    // `ingested_at` is when this timetable was built, not when the daily check last asked —
+                    // an unchanged feed doesn't touch it. It was labelled "Last checked" and shown as raw ISO 8601.
+                    LabeledContent("Downloaded", value: feedIngestedAt
+                        .flatMap { try? Date($0, strategy: .iso8601) }
+                        .map { $0.formatted(Date.FormatStyle(timeZone: AdelaideTZ.timeZone).day().month().year().hour().minute()) }
+                        ?? "—")
                     LabeledContent("Database size", value: ByteCountFormatter.string(fromByteCount: Int64(dbSizeBytes), countStyle: .file))
                     Toggle("Allow cellular timetable updates", isOn: $allowCellularUpdates)
                     Button {
