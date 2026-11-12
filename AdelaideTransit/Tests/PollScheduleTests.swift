@@ -189,34 +189,50 @@ struct PollScheduleTests {
         #expect(PollSchedule.anchor(published: past, now: now) == past)
     }
 
-    /// The engine's loop replayed against a 60 s publisher whose second publish lands 30 s late. The chase
+    /// The engine's loop replayed against a 60 s publisher. With publish `late` arriving 30 s late, the chase
     /// gives up after 15 s, the next poll skips a publish, and that 120 s gap was learned as the cadence.
-    @Test func oneLatePublishDoesNotLockTheCadenceAtDouble() {
-        func visible(at t: TimeInterval) -> TimeInterval {
-            Array(stride(from: 0.0, through: t, by: 60)).last { $0 + ($0 == 60 ? 30 : 5) <= t } ?? 0
+    private func replay(startingCycle: TimeInterval, late: TimeInterval?) -> (cycle: TimeInterval, frames: Int, polls: Int) {
+        func visible(at t: TimeInterval) -> TimeInterval? {
+            Array(stride(from: 0.0, through: t, by: 60)).last { $0 + ($0 == late ? 30 : 5) <= t }
         }
-        var clock: TimeInterval = 5, last: TimeInterval?, cycle: TimeInterval = 60, chased = false
-        var frames = 0
+        var clock: TimeInterval = 5, last: TimeInterval?, cycle = startingCycle, missAt: TimeInterval?
+        var frames = 0, polls = 0
         while clock < 1200 {
+            polls += 1
             let header = visible(at: clock)
-            let got = header != last
-            if got {
+            let got = header != nil && header != last
+            if got, let header {
                 if let last {
                     cycle = PollSchedule.learnedCycle(
-                        previous: cycle, lastHeader: now + last, newHeader: now + header, multiplier: 1, chased: chased
+                        previous: cycle, lastHeader: now + last, newHeader: now + header, multiplier: 1,
+                        chased: PollSchedule.gapIsPinned(gap: header - last, sinceLastMiss: missAt.map { clock - $0 })
                     )
                 }
                 last = header
+                missAt = nil
                 frames += 1
+            } else {
+                missAt = clock
             }
-            let delay = PollSchedule.nextDelay(
-                lastHeader: now + (last ?? 0), cycle: cycle, multiplier: 1, gotNewData: got, now: now + clock
+            clock += PollSchedule.nextDelay(
+                lastHeader: last.map { now + $0 }, cycle: cycle, multiplier: 1, gotNewData: got, now: now + clock
             )
-            chased = PollSchedule.pinsNextGap(gotNewData: got, failures: 0, delay: delay)
-            clock += delay
         }
-        #expect(cycle == 60)
-        #expect(frames >= 18) // ~20 publishes in the window; skipping every other one gives ~10
+        return (cycle, frames, polls)
+    }
+
+    @Test func oneLatePublishDoesNotLockTheCadenceAtDouble() {
+        let run = replay(startingCycle: 60, late: 60)
+        #expect(run.cycle == 60)
+        #expect(run.frames >= 18) // 20 publishes in the window; every other one gives ~10
+    }
+
+    /// Two-sided: the same rule still learns a 60 s cadence from the 15 s default. Requiring the miss to be a
+    /// quick retry never did, and polled ~8 times per publish.
+    @Test func aMinuteCadenceIsLearnedFromTheDefault() {
+        let run = replay(startingCycle: 15, late: nil)
+        #expect(run.cycle == 60)
+        #expect(Double(run.polls) / Double(run.frames) < 2.5)
     }
 
     @Test func keepsPreviousValueWithNoHistory() {

@@ -33,13 +33,22 @@ enum PollSchedule {
         return -delay < min(span, maxChase) ? missRetry : span
     }
 
-    /// Whether the gap to the next header seen will be the real cadence. Only after a miss followed by a quick
-    /// retry: that pins the publish to a few seconds. A miss followed by a full wait — the chase giving up —
-    /// leaves a hole publishes can pass through unseen, and learning across it locked a 60 s feed at 120 s
-    /// after one publish ran 30 s late, every other frame skipped for the rest of the session.
-    static func pinsNextGap(gotNewData: Bool, failures: Int, delay: TimeInterval) -> Bool {
-        !gotNewData && failures == 0 && delay <= missRetry
+    /// Whether a gap between two headers is the real cadence rather than an upper bound on it: whether the
+    /// last poll that saw the old header was recent enough that no publish could have come *and gone* since.
+    /// A skipped publish would sit at least a cadence before the new one and be readable by then plus the lag
+    /// spread, so it fits only if that miss was more than half the gap minus the spread ago.
+    ///
+    /// "Any miss before it" was the rule, and once the chase gave up the next poll came a full cycle later:
+    /// one publish 30 s late locked a 60 s feed at 120 s for the session, every other frame skipped (120 of
+    /// 200 simulated runs with a late publish every 7). "Only a quick retry" fixed that but never learned
+    /// 60 s from the 15 s default at all — 8.2 polls per frame. This holds 1.88 and 0 lock-ups.
+    static func gapIsPinned(gap: TimeInterval, sinceLastMiss: TimeInterval?) -> Bool {
+        guard let sinceLastMiss else { return false }
+        return sinceLastMiss <= gap / 2 - lagSpread
     }
+
+    /// Publish lag ran 1–8.5 s (2026-11-12): how far apart two publishes' first-readable moments can drift.
+    static let lagSpread: TimeInterval = 10
 
     /// The publish time to schedule from: a header claiming to be from the future is treated as now.
     static func anchor(published: Date, now: Date) -> Date { min(published, now) }
@@ -160,8 +169,8 @@ actor RealtimeEngine {
     /// When a failing feed is next allowed to hit the network. Survives a loop restart, which the backoff
     /// otherwise didn't — see `loop`. Nil while the feed is healthy.
     private var nextAttempt: [Feed: Date] = [:]
-    /// Feeds whose last poll answered with the header already held. See `PollSchedule.learnedCycle`.
-    private var chasing: Set<Feed> = []
+    /// When each feed last answered with the header already held. See `PollSchedule.gapIsPinned`.
+    private var lastMissAt: [Feed: Date] = [:]
 
     private enum Endpoint {
         static let tripUpdates = URL(string: "https://gtfs.adelaidemetro.com.au/v1/realtime/trip_updates")!
@@ -237,7 +246,6 @@ actor RealtimeEngine {
     /// left to wake up later and poll again on a stale schedule.
     private func startLoops() {
         for task in loopTasks { task.cancel() }
-        chasing = []
         loopTasks = Feed.allCases.map { feed in
             Task { await self.loop(feed) }
         }
@@ -347,11 +355,7 @@ actor RealtimeEngine {
             guard !Task.isCancelled else { return }
             let backoff = Self.backoff(failures: failures[feed] ?? 0)
             let delay = max(nextDelay(for: feed, multiplier: multiplier, gotNewData: gotNewData), backoff)
-            if PollSchedule.pinsNextGap(gotNewData: gotNewData, failures: failures[feed] ?? 0, delay: delay) {
-                chasing.insert(feed)
-            } else {
-                chasing.remove(feed)
-            }
+            if gotNewData { lastMissAt[feed] = nil } else if (failures[feed] ?? 0) == 0 { lastMissAt[feed] = .now }
             // Only the backoff survives a restart. Carrying the normal cadence too pinned a feed to the
             // *previous* screen's rate: warming trip_updates at 4 cycles on the map, then opening a stop,
             // left the sheet on minute-old predictions for up to another minute. `lastHeaderDate` above
@@ -387,7 +391,10 @@ actor RealtimeEngine {
             lastHeader: lastHeaderDate[feed],
             newHeader: anchor,
             multiplier: multiplier,
-            chased: chasing.contains(feed)
+            chased: PollSchedule.gapIsPinned(
+                gap: anchor.timeIntervalSince(lastHeaderDate[feed] ?? anchor),
+                sinceLastMiss: lastMissAt[feed].map { Date.now.timeIntervalSince($0) }
+            )
         )
         lastHeaderDate[feed] = anchor
     }
