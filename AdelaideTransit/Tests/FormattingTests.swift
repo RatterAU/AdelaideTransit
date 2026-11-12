@@ -129,3 +129,16 @@ struct RouteAppearanceTests {
         #expect(noRoutes.other.map(\.id) == ["route-only", "neither"])
     }
 }
+
+@MainActor
+struct VehicleMarkerAccessibilityTests {
+    /// VoiceOver says which way a bus is heading in words, wrapping at north.
+    @Test func bearingsReadAsCompassPoints() {
+        #expect(VehicleMarkerView.compass(0) == "north")
+        #expect(VehicleMarkerView.compass(350) == "north")
+        #expect(VehicleMarkerView.compass(90) == "east")
+        #expect(VehicleMarkerView.compass(225) == "south-west")
+        #expect(VehicleMarkerView.compass(-90) == "west")
+        #expect(VehicleMarkerView.compass(720) == "north")
+    }
+}

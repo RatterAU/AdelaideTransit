@@ -76,6 +76,8 @@ struct FavouriteRow: View {
                                     .font(.caption)
                                     .monospacedDigit()
                             }
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("Route \(dep.routeShortName), \(spokenMinutes(dep)), \(dep.state.label)")
                         }
                     }
                 }
@@ -103,6 +105,11 @@ struct FavouriteRow: View {
     private var windowText: String {
         windowHours < 1 ? "\(Int(windowHours * 60)) min"
             : windowHours == 1 ? "hour" : "\(Int(windowHours)) hours"
+    }
+
+    private func spokenMinutes(_ dep: Departure) -> String {
+        let text = minutesText(dep)
+        return text.hasSuffix("m") ? "in \(text.dropLast()) minutes" : text
     }
 
     private func minutesText(_ dep: Departure) -> String {

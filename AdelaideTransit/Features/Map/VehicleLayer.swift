@@ -124,6 +124,9 @@ final class StopDotView: MKAnnotationView {
         }
         // Favourites outrank ordinary stops when MapKit has to decide what to hide in tight space.
         displayPriority = isFavourite ? .required : .defaultLow
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+        accessibilityLabel = (annotation?.title ?? nil).map { isFavourite ? "\($0), favourite stop" : "\($0), stop" }
     }
 }
 
@@ -161,6 +164,12 @@ final class VehicleMarkerView: MKAnnotationView {
         addSubview(chevron)
     }
 
+    static func compass(_ degrees: Double) -> String {
+        let names = ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"]
+        let index = Int(((degrees.truncatingRemainder(dividingBy: 360) + 360 + 22.5) / 45).rounded(.down)) % 8
+        return names[index]
+    }
+
     /// Badge width grows to fit the route number — a fixed 44pt box was clipping anything longer than 2 chars.
     func configure(
         routeShortName: String, color: Color, textColor: Color, bearing: Double?, opacity: CGFloat, scale: CGFloat
@@ -182,6 +191,12 @@ final class VehicleMarkerView: MKAnnotationView {
         label.textColor = UIColor(textColor)
         chevron.tintColor = UIColor(textColor)
         alpha = opacity
+        // Without this VoiceOver found an unlabelled element per bus. A ghost is drawn at 0.45 opacity.
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+        accessibilityLabel = opacity < 1
+            ? "Route \(routeShortName), timetable position, not tracked"
+            : "Route \(routeShortName) bus" + (bearing.map { ", heading \(Self.compass($0))" } ?? "")
 
         if let bearing {
             chevron.isHidden = false
