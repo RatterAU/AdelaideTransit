@@ -100,6 +100,13 @@ struct StopSheet: View {
                     }
                 }
             }
+            // A blank sheet read as still loading. Final stops and set-down-only stops are not listed, so
+            // a terminus is a stop where this is the honest answer all day.
+            if upcoming.isEmpty, departuresLoadedAt != .distantPast {
+                Text("No departures in the next \(windowText(hours: departureWindowHours))")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
             ForEach(upcoming) { dep in
                 Button { onSelectTrip(dep.tripID) } label: {
                     DepartureRow(

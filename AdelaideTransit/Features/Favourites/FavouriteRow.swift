@@ -49,7 +49,7 @@ struct FavouriteRow: View {
                 }
 
                 if departures.isEmpty {
-                    Text("No departures in the next \(windowText)")
+                    Text("No departures in the next \(windowText(hours: windowHours))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
@@ -102,10 +102,6 @@ struct FavouriteRow: View {
     @State private var showRename = false
     @State private var renamePrompt = ""
 
-    private var windowText: String {
-        windowHours < 1 ? "\(Int(windowHours * 60)) min"
-            : windowHours == 1 ? "hour" : "\(Int(windowHours)) hours"
-    }
 
     private func spokenMinutes(_ dep: Departure) -> String {
         let text = minutesText(dep)

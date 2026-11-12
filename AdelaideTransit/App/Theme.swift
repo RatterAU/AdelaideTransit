@@ -155,6 +155,11 @@ func walkVerdict(walkSeconds: TimeInterval, secondsUntilDeparture: TimeInterval)
     return slack >= 0 ? .tight(walkMinutes: walkMinutes) : .missed(walkMinutes: walkMinutes)
 }
 
+/// "hour" / "2 hours" / "30 min" — the departure window as the empty states name it.
+func windowText(hours: Double) -> String {
+    hours < 1 ? "\(Int(hours * 60)) min" : hours == 1 ? "hour" : "\(Int(hours)) hours"
+}
+
 /// "240m" / "1.4km". Shared so the stop sheet and the favourites list can't drift into two spellings.
 func distanceText(_ metres: Double) -> String {
     metres < 1000 ? "\(Int(metres.rounded()))m" : String(format: "%.1fkm", metres / 1000)
