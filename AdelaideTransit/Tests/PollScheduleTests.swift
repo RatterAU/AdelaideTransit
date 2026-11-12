@@ -176,6 +176,19 @@ struct PollScheduleTests {
         #expect(RealtimeEngine.headerTimestamp(prefix: Data([0x12, 0x00])) == nil)
     }
 
+    /// The alerts header ran 37500 s ahead of the clock (2026-11-13). Phase-locked to it, the next poll was
+    /// ten hours away and alerts never refreshed after the first fetch.
+    @Test func aHeaderFromTheFutureIsScheduledFromNow() {
+        let future = now.addingTimeInterval(37_500)
+        let anchor = PollSchedule.anchor(published: future, now: now)
+        #expect(anchor == now)
+        let delay = PollSchedule.nextDelay(lastHeader: anchor, cycle: 15, multiplier: 20, gotNewData: true, now: now)
+        #expect(delay <= 15 * 20 + PollSchedule.publishLag)
+        // Two-sided: a normal, past header is kept as it is.
+        let past = now.addingTimeInterval(-7)
+        #expect(PollSchedule.anchor(published: past, now: now) == past)
+    }
+
     @Test func keepsPreviousValueWithNoHistory() {
         let learned = PollSchedule.learnedCycle(
             previous: 15, lastHeader: nil, newHeader: now, multiplier: 1, chased: true

@@ -33,6 +33,9 @@ enum PollSchedule {
         return -delay < min(span, maxChase) ? missRetry : span
     }
 
+    /// The publish time to schedule from: a header claiming to be from the future is treated as now.
+    static func anchor(published: Date, now: Date) -> Date { min(published, now) }
+
     /// Cycles between warming polls of trip_updates on the map: about once a minute, whatever the cadence.
     /// Fixed at 4 cycles it was 4-minute-old predictions on the first tap once the feed slowed to 60 s.
     static func warmMultiplier(cycle: TimeInterval) -> Double {
@@ -364,14 +367,18 @@ actor RealtimeEngine {
         if feed != .alerts, date > (feedTimestamp ?? .distantPast) {
             feedTimestamp = date
         }
+        // Scheduled off no later than now. The alerts header runs ~10.5 h ahead of the clock (37500 s on
+        // 2026-11-13: local time written as UTC), and phase-locking to it parked the alerts loop until then,
+        // so after the first fetch alerts never refreshed. Its periods are in real time; only the header is off.
+        let anchor = PollSchedule.anchor(published: date, now: .now)
         learnedCycle[feed] = PollSchedule.learnedCycle(
             previous: learnedCycle[feed] ?? Self.defaultPublishCycle,
             lastHeader: lastHeaderDate[feed],
-            newHeader: date,
+            newHeader: anchor,
             multiplier: multiplier,
             chased: chasing.contains(feed)
         )
-        lastHeaderDate[feed] = date
+        lastHeaderDate[feed] = anchor
     }
 
     /// Returns whether the poll produced a frame we hadn't already seen.
@@ -474,16 +481,10 @@ actor RealtimeEngine {
                 if !selector.routeID.isEmpty { routeIDs.insert(selector.routeID) }
                 if !selector.stopID.isEmpty { stopIDs.insert(selector.stopID) }
             }
-            // Every period, not just the first. A planned closure is routinely published as one alert with a
-            // window per night, and reading `activePeriod.first` meant the whole alert expired — and was
-            // filtered off the tab, the badge and the favourites banner — the morning after the first night.
-            // Any period without an end makes the alert open-ended.
-            let starts = a.activePeriod.compactMap {
-                $0.hasStart ? Date(timeIntervalSince1970: TimeInterval($0.start)) : nil
-            }
-            let ends = a.activePeriod.compactMap {
-                $0.hasEnd ? Date(timeIntervalSince1970: TimeInterval($0.end)) : nil
-            }
+            let window = ServiceAlert.window(of: a.activePeriod.map {
+                (start: $0.hasStart ? Date(timeIntervalSince1970: TimeInterval($0.start)) : nil,
+                 end: $0.hasEnd ? Date(timeIntervalSince1970: TimeInterval($0.end)) : nil)
+            })
             result.append(ServiceAlert(
                 id: entity.id,
                 // Flattened once here rather than per render — the feed ships HTML in both fields.
@@ -492,8 +493,8 @@ actor RealtimeEngine {
                 effect: a.hasEffect ? a.effect : .unknownEffect,
                 severity: a.hasSeverityLevel ? a.severityLevel : .unknownSeverity,
                 informedRouteIDs: routeIDs, informedStopIDs: stopIDs,
-                activeFrom: starts.min(),
-                activeTo: ends.count == a.activePeriod.count ? ends.max() : nil
+                activeFrom: window.from,
+                activeTo: window.to
             ))
         }
         // Filtered here, once, rather than in each of the three consumers — the Alerts tab, the tab badge and

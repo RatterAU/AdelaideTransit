@@ -27,6 +27,22 @@ struct ServiceAlert: Sendable, Identifiable, Equatable {
     let activeFrom: Date?
     let activeTo: Date?
 
+    /// One window over all of an alert's active periods: earliest start, latest end.
+    ///
+    /// Every period, not just the first — a planned closure can be one alert with a window per night, and
+    /// reading `activePeriod.first` expired the whole thing the morning after night one. A period with no end
+    /// makes the alert open-ended, **unless the feed has split the window in two**: Adelaide publishes a
+    /// bounded alert as a start-only period plus an end-only one (33 of 74 alerts on 2026-11-13, every alert
+    /// that had an end at all). Read as "any missing end is open-ended", none of those ever expired here and
+    /// none showed its "Until" date.
+    static func window(of periods: [(start: Date?, end: Date?)]) -> (from: Date?, to: Date?) {
+        let from = periods.compactMap(\.start).min()
+        let ends = periods.compactMap(\.end)
+        let hasEndOnly = periods.contains { $0.start == nil && $0.end != nil }
+        let openEnded = periods.isEmpty || (periods.contains { $0.end == nil } && !hasEndOnly)
+        return (from, openEnded ? nil : ends.max())
+    }
+
     /// Whether this alert has not yet expired. The feed keeps publishing an alert past the end of its active
     /// period and nothing filtered on it: the Alerts tab listed finished roadworks under a heading that reads
     /// "No active alerts" when empty, the tab badge counted them, and a favourite kept an amber closure
@@ -61,6 +77,11 @@ enum GhostCutoffs {
         let v = UserDefaults.standard.double(forKey: "staleCutoffSeconds")
         return v > 0 ? v : 90
     }
+    /// When predictions stop counting as current. Not `staleAfter`: that is tuned to vehicle positions,
+    /// which publish every 15 s, and trip_updates publishes every ~60 s and is readable up to 8.5 s later
+    /// (2026-11-12). At the default 90 s one late publish flashed "Live times last updated" and dropped every
+    /// "Due" row back to "Departed". Two missed publishes, or the user's cutoff if that is longer.
+    static var predictionsStaleAfter: TimeInterval { max(staleAfter, 150) }
     /// How far ahead of its scheduled start an untracked trip is still worth drawing as a ghost. Fixed at
     /// 5 min: it was a Settings slider, but it is an internal threshold about feed behaviour that nobody
     /// can tune without knowing what the feed does, and the "Show ghosts on map" toggle is the control
@@ -205,7 +226,7 @@ enum Merge {
     static func hasGone(_ dep: Departure, frame: RealtimeFrame?, now: Date) -> Bool {
         guard dep.displayTime < now else { return false }
         guard dep.isStillListed, let published = frame?.tripUpdatesTimestamp else { return true }
-        return now.timeIntervalSince(published) > GhostCutoffs.staleAfter
+        return now.timeIntervalSince(published) > GhostCutoffs.predictionsStaleAfter
     }
 
     /// The update that actually belongs to this stop.

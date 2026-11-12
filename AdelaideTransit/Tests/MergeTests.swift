@@ -196,6 +196,20 @@ struct MergeTests {
         #expect(alert(to: nil).isActive(now: now)) // no end date is open-ended, not expired
     }
 
+    /// The feed's shape for a bounded alert: (start, –) plus (–, end). Two-sided against the shapes that
+    /// really are open-ended, and the per-night form.
+    @Test func anAlertSplitIntoStartAndEndPeriodsHasAnEnd() {
+        let start = midnight, end = midnight.addingTimeInterval(86_400)
+        let split = ServiceAlert.window(of: [(start: start, end: nil), (start: nil, end: end)])
+        #expect(split.from == start && split.to == end)
+        #expect(ServiceAlert.window(of: [(start: start, end: nil)]).to == nil)
+        let nightly = ServiceAlert.window(of: [(start: start, end: end), (start: end, end: nil)])
+        #expect(nightly.to == nil) // a dated night plus an open one is still open-ended
+        let nights = ServiceAlert.window(of: [(start: start, end: start.addingTimeInterval(60)), (start: end, end: end.addingTimeInterval(60))])
+        #expect(nights.from == start && nights.to == end.addingTimeInterval(60))
+        #expect(ServiceAlert.window(of: []).to == nil)
+    }
+
     // MARK: - stop search ranking
 
     /// Ranking is the whole point of the rewrite: SQL can filter but the old `LIMIT 30` handed back rows in
@@ -316,7 +330,9 @@ struct MergeTests {
         #expect(!Merge.hasGone(listed, frame: f, now: soonAfter))
         // Two-sided: a stop the feed dropped has gone, and so has a listed one once nothing vouches for it.
         #expect(Merge.hasGone(passed, frame: f, now: soonAfter))
-        #expect(Merge.hasGone(listed, frame: f, now: ts.addingTimeInterval(GhostCutoffs.staleAfter + 11)))
+        #expect(Merge.hasGone(listed, frame: f, now: ts.addingTimeInterval(GhostCutoffs.predictionsStaleAfter + 11)))
+        // A single late 60 s publish is not stale.
+        #expect(!Merge.hasGone(listed, frame: f, now: ts.addingTimeInterval(120)))
         #expect(Merge.hasGone(listed, frame: nil, now: soonAfter))
         // A timetable row has only the clock.
         let scheduled = departure(seq: 9, offset: 900, base: midnight)
