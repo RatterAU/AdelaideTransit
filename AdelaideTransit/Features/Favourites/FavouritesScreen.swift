@@ -93,9 +93,16 @@ struct FavouritesScreen: View {
         .task {
             for await frame in engine.frames {
                 lastFrame = frame
-                if Date.now.timeIntervalSince(departuresLoadedAt) > Self.scheduleReloadInterval {
-                    await load()
-                }
+                await reloadIfStale()
+            }
+        }
+        // Off the clock too, not only on frames. The timetable is on the phone, but frames stop with the
+        // network: back from a few hours in the background with no signal, every row had slid out of the
+        // window and the list said "No departures in the next 2 hours" until a frame happened to land.
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(Self.countdownTick))
+                await reloadIfStale()
             }
         }
     }
@@ -105,7 +112,7 @@ struct FavouritesScreen: View {
     @ViewBuilder
     private func staleBadge(now: Date) -> some View {
         if let published = lastFrame?.tripUpdatesTimestamp,
-           now.timeIntervalSince(published) > GhostCutoffs.staleAfter {
+           now.timeIntervalSince(published) > GhostCutoffs.predictionsStaleAfter {
             DataAgeBadge(timestamp: published).padding()
         }
     }
@@ -167,6 +174,11 @@ struct FavouritesScreen: View {
         }
         departuresByStop = fresh
         departuresLoadedAt = .now
+    }
+
+    private func reloadIfStale() async {
+        guard Date.now.timeIntervalSince(departuresLoadedAt) > Self.scheduleReloadInterval else { return }
+        await load()
     }
 
     private func rename(_ fav: Favourite, to label: String) async {

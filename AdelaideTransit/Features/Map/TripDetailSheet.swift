@@ -172,7 +172,7 @@ struct TripDetailSheet: View {
                 ScrollViewReader { proxy in
                     List {
                         if let published = frame?.tripUpdatesTimestamp,
-                           context.date.timeIntervalSince(published) > GhostCutoffs.staleAfter {
+                           context.date.timeIntervalSince(published) > GhostCutoffs.predictionsStaleAfter {
                             StaleTimesLabel(age: context.date.timeIntervalSince(published))
                         }
                         ForEach(stops) { dep in
@@ -512,6 +512,14 @@ struct TripDetailSheet: View {
         .strikethrough(dep.state == .cancelled)
         .contentShape(Rectangle())
         .listRowBackground(isYours ? Color.accentColor.opacity(0.10) : Color.clear)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel([
+            dep.headsign,
+            isYours ? "your stop" : "", isNext ? "next stop" : "",
+            dep.state == .cancelled ? "cancelled" : "\(countdownText(for: dep, now: now)), at \(dep.displayTime.formatted(clockStyle(use24Hour: use24Hour)))",
+            dep.delta.map { abs($0) >= lateThreshold ? deltaLabel($0) : "" } ?? "",
+        ].filter { !$0.isEmpty }.joined(separator: ", "))
+        .accessibilityAddTraits(.isButton)
     }
 
     /// What this bus does at a stop you tapped on the route: route, stop, when it gets there, how long that

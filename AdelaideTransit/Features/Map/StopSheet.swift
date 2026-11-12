@@ -56,9 +56,13 @@ struct StopSheet: View {
         // The rows are fetched once and merged against every frame, so a sheet left open — which this one is
         // built for, background interaction is enabled and you can keep panning the map — watched its window
         // slide off the end of what it had fetched and decayed to an empty list that never recovered.
-        .task(id: frame?.headerTimestamp) {
-            guard Date.now.timeIntervalSince(departuresLoadedAt) > Self.scheduleReloadInterval else { return }
-            await load()
+        // On a clock, not on frames: frames stop with the network, and the timetable doesn't need one.
+        .task(id: stop.id) {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(Self.countdownTick))
+                guard Date.now.timeIntervalSince(departuresLoadedAt) > Self.scheduleReloadInterval else { continue }
+                await load()
+            }
         }
     }
 
@@ -68,7 +72,7 @@ struct StopSheet: View {
             // The map's age badge sits under this sheet and reports the vehicles feed. Predictions that have
             // stopped arriving still read "LIVE", and nothing else here says how old they are.
             if let published = frame?.tripUpdatesTimestamp,
-               now.timeIntervalSince(published) > GhostCutoffs.staleAfter {
+               now.timeIntervalSince(published) > GhostCutoffs.predictionsStaleAfter {
                 StaleTimesLabel(age: now.timeIntervalSince(published))
             }
             if !past.isEmpty {
@@ -375,6 +379,30 @@ struct DepartureRow: View {
         .opacity(isPast ? 0.55 : 1)
         .strikethrough(departure.state == .cancelled)
         .animation(.snappy, value: departure.displayTime)
+        // One sentence per row. Read child by child it was the route, the headsign, a bare symbol name,
+        // "·", the fleet number and two times with nothing saying which was which.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(spokenSummary)
+    }
+
+    private var spokenSummary: String {
+        var parts = ["Route \(departure.routeShortName) to \(departure.headsign)"]
+        if departure.state == .cancelled {
+            parts.append("cancelled, was due \(clockText)")
+            return parts.joined(separator: ", ")
+        }
+        parts.append(isPast ? "departed \(agoText), at \(clockText)"
+                            : "\(countdownText(for: departure, now: now)), at \(clockText)")
+        parts.append(isPast ? "" : stateLabel)
+        if let delta = departure.delta, abs(delta) >= lateThreshold { parts.append(deltaLabel(delta)) }
+        if !isPast, let stopsAway, let text = stopsAwayText(stopsAway) { parts.append(text) }
+        if !isPast, let occupancy { parts.append(occupancy.label) }
+        switch verdict {
+        case .comfortable: break
+        case .tight(let minutes): parts.append("tight, \(minutes) minute walk")
+        case .missed(let minutes): parts.append("\(minutes) minute walk, you won't make it")
+        }
+        return parts.filter { !$0.isEmpty }.joined(separator: ", ")
     }
 
     /// "LIVE" only when there is a GPS fix behind it. A feed prediction with no vehicle *is* realtime — it
