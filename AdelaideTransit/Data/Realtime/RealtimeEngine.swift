@@ -11,7 +11,12 @@ enum PollSchedule {
     static let publishLag: TimeInterval = 5
     static let missRetry: TimeInterval = 3
     static let minCycle: TimeInterval = 5
-    static let maxCycle: TimeInterval = 60
+    /// Room above trip_updates' 59–61 s cadence (measured 2026-11-12/13). It was 60, which refused every
+    /// 61 s gap, so the cadence stayed at the 15 s default and each publish cost ~7 identical downloads.
+    static let maxCycle: TimeInterval = 120
+    /// How long past an expected publish it is worth retrying fast. Publish lag ran 1–8.5 s (2026-11-12);
+    /// a whole cycle of chasing at 60 s was twenty full payloads from a stalled publisher.
+    static let maxChase: TimeInterval = 15
 
     static func nextDelay(
         lastHeader: Date?, cycle: TimeInterval, multiplier: Double, gotNewData: Bool, now: Date
@@ -23,9 +28,15 @@ enum PollSchedule {
         let delay = lastHeader.addingTimeInterval(span + publishLag).timeIntervalSince(now)
         if delay > 0 { return delay }
         // Already past the expected publish: chase it with a short retry rather than idling a whole cycle —
-        // but only for one cycle. A stalled publisher answers 200 with the same header, which is no failure,
+        // but for at most one cycle or `maxChase`, whichever is shorter. A stalled publisher answers 200 with the same header, which is no failure,
         // so nothing else slows this down and an uncapped chase was a full payload every 3s, indefinitely.
-        return -delay < span ? missRetry : span
+        return -delay < min(span, maxChase) ? missRetry : span
+    }
+
+    /// Cycles between warming polls of trip_updates on the map: about once a minute, whatever the cadence.
+    /// Fixed at 4 cycles it was 4-minute-old predictions on the first tap once the feed slowed to 60 s.
+    static func warmMultiplier(cycle: TimeInterval) -> Double {
+        max(1, (60 / cycle).rounded(.down))
     }
 
     /// Learn the source's real cadence from the gap between consecutive publish timestamps.
@@ -263,7 +274,8 @@ actor RealtimeEngine {
             if sheetOpen { return 1 * scale }
             // Warm the predictions cache so the first tap on a stop already has live times, but only where
             // the bytes are free — trip_updates is 240 KB uncompressed and this server offers no ETag.
-            return (onWiFi && !dataSaver && !pathConstrained) ? 4 * scale : nil
+            let cycle = learnedCycle[.tripUpdates] ?? Self.defaultPublishCycle
+            return (onWiFi && !dataSaver && !pathConstrained) ? PollSchedule.warmMultiplier(cycle: cycle) * scale : nil
         case (.map, .alerts): return backgroundAlerts
         case (.tripDetail, .vehicles): return 1 * scale
         case (.tripDetail, .tripUpdates): return 1 * scale
@@ -372,7 +384,7 @@ actor RealtimeEngine {
     }
 
     private func pollVehicles() async -> Bool {
-        guard let message = await fetch(Endpoint.vehiclePositions, feed: .vehicles) else { return false }
+        guard let message = await fetch(Endpoint.vehiclePositions, feed: .vehicles, holding: lastVehiclesHeaderTimestamp) else { return false }
         guard message.header.timestamp != lastVehiclesHeaderTimestamp else { return false }
         lastVehiclesHeaderTimestamp = message.header.timestamp
         if let published = Self.publishDate(of: message) {
@@ -403,7 +415,7 @@ actor RealtimeEngine {
     }
 
     private func pollTripUpdates() async -> Bool {
-        guard let message = await fetch(Endpoint.tripUpdates, feed: .tripUpdates) else { return false }
+        guard let message = await fetch(Endpoint.tripUpdates, feed: .tripUpdates, holding: lastTripUpdatesHeaderTimestamp) else { return false }
         guard message.header.timestamp != lastTripUpdatesHeaderTimestamp else { return false }
         lastTripUpdatesHeaderTimestamp = message.header.timestamp
         let published = Self.publishDate(of: message)
@@ -446,7 +458,7 @@ actor RealtimeEngine {
     }
 
     private func pollAlerts() async -> Bool {
-        guard let message = await fetch(Endpoint.serviceAlerts, feed: .alerts) else { return false }
+        guard let message = await fetch(Endpoint.serviceAlerts, feed: .alerts, holding: lastAlertsHeaderTimestamp) else { return false }
         guard message.header.timestamp != lastAlertsHeaderTimestamp else { return false }
         lastAlertsHeaderTimestamp = message.header.timestamp
         if let published = Self.publishDate(of: message) {
@@ -500,7 +512,27 @@ actor RealtimeEngine {
     /// day this server does start compressing, every poll would hand raw deflate bytes to the protobuf
     /// decoder and fail. Nothing was gained for the risk: the header we were setting is a subset of the one
     /// URLSession sends anyway.
-    private func fetch(_ url: URL, feed: Feed) async -> TransitRealtime_FeedMessage? {
+    ///
+    /// Asks first whether there is anything new. The server has no `ETag`, but it honours `Range` (206 via
+    /// CloudFront, checked 2026-11-13), and the feed header — publish timestamp included — is the first field
+    /// of the message. So a poll that would have re-downloaded the frame already held costs a 256-byte probe
+    /// instead of the whole payload. With publish lag running 1–8.5 s against a 5 s aim, that was about half
+    /// of all polls. A server that ignores the range answers 200 with the full body, which is used as is.
+    private func fetch(_ url: URL, feed: Feed, holding held: UInt64?) async -> TransitRealtime_FeedMessage? {
+        if let held {
+            var probe = URLRequest(url: url)
+            probe.setValue("bytes=0-\(Self.probeBytes - 1)", forHTTPHeaderField: "Range")
+            if let (data, response) = try? await Self.session.data(for: probe),
+               let http = response as? HTTPURLResponse {
+                if http.statusCode == 206, let published = Self.headerTimestamp(prefix: data), published == held {
+                    failures[feed] = 0
+                    return nil
+                }
+                if http.statusCode == 200 { return decode(data, http, feed: feed) }
+            }
+            guard !Task.isCancelled else { return nil }
+            // Anything else — new header, unparseable prefix, a failed probe — falls through to the full GET.
+        }
         var request = URLRequest(url: url)
         if let etag = etags[feed] { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }
         guard let (data, response) = try? await Self.session.data(for: request),
@@ -517,6 +549,10 @@ actor RealtimeEngine {
             failures[feed] = 0
             return nil
         }
+        return decode(data, http, feed: feed)
+    }
+
+    private func decode(_ data: Data, _ http: HTTPURLResponse, feed: Feed) -> TransitRealtime_FeedMessage? {
         // A 5xx error page is not a feed. It already failed to parse; what it also did was reset the
         // failure count, so an outage retried every 3s indefinitely instead of backing off.
         guard (200...299).contains(http.statusCode),
@@ -527,6 +563,30 @@ actor RealtimeEngine {
         failures[feed] = 0
         etags[feed] = http.value(forHTTPHeaderField: "ETag")
         return message
+    }
+
+    /// The live header is ~20 bytes; this leaves room for an extension on it.
+    static let probeBytes = 256
+
+    /// The publish timestamp from the first bytes of a serialised `FeedMessage`, or nil if the header isn't
+    /// wholly inside them. `header` is field 1, so it is the leading length-delimited record.
+    static func headerTimestamp(prefix: Data) -> UInt64? {
+        let bytes = [UInt8](prefix)
+        guard bytes.first == 0x0A else { return nil }
+        var length = 0, shift = 0, index = 1
+        while index < bytes.count, shift < 35 {
+            let byte = bytes[index]
+            length |= Int(byte & 0x7F) << shift
+            index += 1
+            if byte & 0x80 == 0 {
+                guard index + length <= bytes.count,
+                      let header = try? TransitRealtime_FeedHeader(serializedBytes: Data(bytes[index..<(index + length)])),
+                      header.hasTimestamp else { return nil }
+                return header.timestamp
+            }
+            shift += 7
+        }
+        return nil
     }
 
     private static func publishDate(of message: TransitRealtime_FeedMessage) -> Date? {

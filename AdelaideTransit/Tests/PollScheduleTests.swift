@@ -123,6 +123,59 @@ struct PollScheduleTests {
         #expect(tooShort == 15)
     }
 
+    /// trip_updates publishes every 59–61 s (measured 2026-11-12/13), and a cap of exactly 60 refused every
+    /// 61 s gap: the learned cadence stayed at 15 and each real publish cost ~7 identical 118 KB downloads.
+    @Test func learnsAMinuteLongCadenceEvenWithJitter() {
+        let learned = PollSchedule.learnedCycle(
+            previous: 15, lastHeader: now, newHeader: now.addingTimeInterval(61), multiplier: 1, chased: true
+        )
+        #expect(learned == 61)
+    }
+
+    /// One cycle of chasing at a 60 s cadence is twenty full downloads of a stalled feed. Publish lag ran to
+    /// 8.5 s at worst (2026-11-12), so chasing past `maxChase` finds nothing a scheduled poll wouldn't.
+    @Test func theChaseIsBoundedInSecondsOnASlowFeed() {
+        let lastHeader = now.addingTimeInterval(-(60 + PollSchedule.publishLag + 20))
+        let delay = PollSchedule.nextDelay(
+            lastHeader: lastHeader, cycle: 60, multiplier: 1, gotNewData: false, now: now
+        )
+        #expect(delay == 60)
+        // Two-sided: just past the expected publish it still chases.
+        let justLate = PollSchedule.nextDelay(
+            lastHeader: now.addingTimeInterval(-(60 + PollSchedule.publishLag + 2)),
+            cycle: 60, multiplier: 1, gotNewData: false, now: now
+        )
+        #expect(justLate == PollSchedule.missRetry)
+    }
+
+    /// The map warms trip_updates so the first tap on a stop has live times. Four cycles was a minute at a
+    /// 15 s cadence and four minutes at the 60 s one the feed now runs.
+    @Test func mapWarmRateIsAboutAMinuteWhateverTheCadence() {
+        #expect(PollSchedule.warmMultiplier(cycle: 15) == 4)
+        #expect(PollSchedule.warmMultiplier(cycle: 60) == 1)
+        #expect(PollSchedule.warmMultiplier(cycle: 61) == 1)
+        #expect(PollSchedule.warmMultiplier(cycle: 30) == 2)
+    }
+
+    /// The range probe reads the publish time off the front of a payload it never downloads in full.
+    @Test func headerTimestampIsReadFromThePrefixOfAFullFeed() throws {
+        var message = TransitRealtime_FeedMessage()
+        message.header.gtfsRealtimeVersion = "2.0"
+        message.header.timestamp = 1_794_476_107
+        message.entity = (0..<200).map { i in
+            var entity = TransitRealtime_FeedEntity()
+            entity.id = "trip-\(i)"
+            entity.tripUpdate.trip.tripID = "\(1_000_000 + i)"
+            return entity
+        }
+        let full: Data = try message.serializedBytes()
+        #expect(full.count > RealtimeEngine.probeBytes)
+        #expect(RealtimeEngine.headerTimestamp(prefix: full.prefix(RealtimeEngine.probeBytes)) == 1_794_476_107)
+        // Two-sided: a prefix that cuts the header short is "don't know", never a wrong timestamp.
+        #expect(RealtimeEngine.headerTimestamp(prefix: full.prefix(6)) == nil)
+        #expect(RealtimeEngine.headerTimestamp(prefix: Data([0x12, 0x00])) == nil)
+    }
+
     @Test func keepsPreviousValueWithNoHistory() {
         let learned = PollSchedule.learnedCycle(
             previous: 15, lastHeader: nil, newHeader: now, multiplier: 1, chased: true
