@@ -196,6 +196,31 @@ struct GTFSStoreTests {
         #expect(departures[0].scheduledTime < departures[1].scheduledTime)
     }
 
+    /// A trip's last stop is an arrival. The feed leaves `pickup_type` 0 there, so nothing but position in
+    /// the trip says so — and listed, a terminus's board was services ending at it.
+    @Test func aTripsFinalStopIsNotADeparture() async throws {
+        let (store, directory) = try await makeStore()
+        defer { remove(directory) }
+
+        // T502 ends at 10004 at 09:20. Still on the trip, so the trip sheet lists it.
+        #expect(try await store.allStopTimes(tripID: "T502").last?.stopID == "10004")
+        #expect(try await store.departures(stopID: "10004", from: wednesdayMorning, window: 3 * 3600).isEmpty)
+        // 10006 is where TDEPOT both starts (09:25) and ends (10:05): one departure, the first visit.
+        let loop = try await store.departures(stopID: "10006", from: wednesdayMorning, window: 3 * 3600)
+        #expect(loop.map(\.stopSequence) == [1])
+    }
+
+    /// `pickup_type` 1: the bus stops only to let people off.
+    @Test func aSetDownOnlyStopIsNotADeparture() async throws {
+        let (store, directory) = try await makeStore()
+        defer { remove(directory) }
+
+        // TDEPOT calls at 10001 at 09:58, set down only; T502 picks up there at 09:10.
+        #expect(try await store.allStopTimes(tripID: "TDEPOT").map(\.stopID).contains("10001"))
+        let departures = try await store.departures(stopID: "10001", from: wednesdayMorning, window: 3 * 3600)
+        #expect(departures.map(\.tripID) == ["T502"])
+    }
+
     /// A "25:10:00" trip is the *previous* service day still running. Querying at 01:00 has to reach back a
     /// day to find it, which is the whole reason `departures` resolves two service days.
     @Test func anAfterMidnightTripBelongsToYesterdaysServiceDay() async throws {

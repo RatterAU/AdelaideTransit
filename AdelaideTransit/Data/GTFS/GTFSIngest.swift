@@ -284,7 +284,7 @@ enum GTFSIngest {
     private static func ingestStopTimes(_ zip: ZipReader, _ dbQueue: DatabaseQueue, _ isCancelled: () -> Bool) throws {
         var csv = CSVReader(bytes: try zip.extract("stop_times.txt"))
         try dbQueue.write { db in
-            let stmt = try db.makeStatement(sql: "INSERT INTO stop_times(trip_id, seq, stop_id, arr, dep) VALUES (?, ?, ?, ?, ?)")
+            let stmt = try db.makeStatement(sql: "INSERT INTO stop_times(trip_id, seq, stop_id, arr, dep, pickup) VALUES (?, ?, ?, ?, ?, ?)")
             while let row = csv.next() {
                 guard !isCancelled() else { throw CancellationError() }
                 let tripID = csv[row, "trip_id"]
@@ -296,7 +296,8 @@ enum GTFSIngest {
                 let dep = GTFSTime.seconds(csv[row, "departure_time"])
                 guard let arrival = arr ?? dep, let departure = dep ?? arr else { continue }
                 try stmt.execute(arguments: [
-                    tripID, Int(csv[row, "stop_sequence"]) ?? 0, csv[row, "stop_id"], arrival, departure
+                    tripID, Int(csv[row, "stop_sequence"]) ?? 0, csv[row, "stop_id"], arrival, departure,
+                    Int(csv[row, "pickup_type"]) ?? 0
                 ])
             }
         }

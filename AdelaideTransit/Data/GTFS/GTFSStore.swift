@@ -514,6 +514,12 @@ actor GTFSStore {
     /// Scheduled departures at a stop within [from, from+window], across the three service-days that can
     /// produce wall-clock times in that window: today's, yesterday's after-midnight trips, and tomorrow's
     /// first buses, which a late-evening query with a wide window reaches into.
+    ///
+    /// Only services you can board. A trip's last stop is an arrival, and the feed does not mark it
+    /// (`pickup_type` is 0 on 22624 of 22639 final stops): listed, half of Adelaide Railway Station's board
+    /// (829 of 1657 rows) and all of Paradise Interchange Terminus's were services ending there, under a
+    /// headsign naming the stop you were standing at. Set-down-only stops (`pickup_type` 1) go the same way.
+    /// A one-stop trip keeps its only stop. Measured 2026-11-06 feed.
     func departures(stopID: String, from: Date, window: TimeInterval = 90 * 60) throws -> [Departure] {
         guard let dbQueue else { return [] }
         let to = from.addingTimeInterval(window)
@@ -545,6 +551,9 @@ actor GTFSStore {
                     JOIN trips t ON t.id = st.trip_id
                     JOIN routes r ON r.id = t.route_id
                     WHERE st.stop_id = ? AND st.dep BETWEEN ? AND ? AND t.service_id IN (\(placeholders))
+                      AND st.pickup <> 1
+                      AND (st.seq < (SELECT MAX(seq) FROM stop_times WHERE trip_id = st.trip_id)
+                           OR st.seq = (SELECT MIN(seq) FROM stop_times WHERE trip_id = st.trip_id))
                     ORDER BY st.dep
                     """, arguments: StatementArguments(
                         [stopID, lo, hi] as [any DatabaseValueConvertible] + Array(serviceIDs)

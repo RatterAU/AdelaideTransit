@@ -51,17 +51,20 @@ struct GTFSFixture {
             """
         // T502 arrives 10004 at 09:20. T110 leaves 10005 — 8 m away, a different stop_id — at 09:30.
         // TLATE runs at 25:10, i.e. 01:10 the following morning on the previous service day.
+        // TDEPOT only sets down at 10001 (`pickup_type` 1) and ends back where it started.
         fixture.files["stop_times.txt"] = """
-            trip_id,stop_sequence,stop_id,arrival_time,departure_time
-            T502,1,10003,09:00:00,09:00:00
-            T502,2,10001,09:10:00,09:10:00
-            T502,3,10004,09:20:00,09:20:00
-            T110,1,10005,09:30:00,09:30:00
-            T110,2,10002,09:45:00,09:45:00
-            TDEPOT,1,10006,09:25:00,09:25:00
-            TDEPOT,2,10003,09:50:00,09:50:00
-            TLATE,1,10001,25:10:00,25:10:00
-            TSUPPRESSED,1,10001,,09:05:00
+            trip_id,stop_sequence,stop_id,arrival_time,departure_time,pickup_type
+            T502,1,10003,09:00:00,09:00:00,0
+            T502,2,10001,09:10:00,09:10:00,0
+            T502,3,10004,09:20:00,09:20:00,0
+            T110,1,10005,09:30:00,09:30:00,0
+            T110,2,10002,09:45:00,09:45:00,0
+            TDEPOT,1,10006,09:25:00,09:25:00,0
+            TDEPOT,2,10003,09:50:00,09:50:00,0
+            TDEPOT,3,10001,09:58:00,09:58:00,1
+            TDEPOT,4,10006,10:05:00,10:05:00,0
+            TLATE,1,10001,25:10:00,25:10:00,0
+            TSUPPRESSED,1,10001,,09:05:00,0
 
             """
         fixture.files["shapes.txt"] = """

@@ -115,6 +115,18 @@ enum Schema {
             try db.execute(sql: "DELETE FROM meta WHERE key IN ('etag', 'last_modified')")
         }
 
+        // `pickup_type` 1 is a stop the bus only sets down at: 4363 stop_times on the 2026-11-06 feed, whole
+        // runs of Main North Rd and Anzac Hwy on the express and Adelaide Oval services. Listed as
+        // departures, those are buses that drive past you. Only ingest can fill the column, so this
+        // forces one the same way `v3_trip_blocks` does; until it lands every stop reads as boardable,
+        // which is what the app showed before.
+        migrator.registerMigration("v4_pickup_type") { db in
+            try db.execute(sql: """
+                ALTER TABLE stop_times ADD COLUMN pickup INTEGER NOT NULL DEFAULT 0;
+                DELETE FROM meta WHERE key IN ('etag', 'last_modified');
+                """)
+        }
+
         return migrator
     }
 
