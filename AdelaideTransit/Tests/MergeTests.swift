@@ -330,7 +330,7 @@ struct MergeTests {
         #expect(!Merge.hasGone(listed, frame: f, now: soonAfter))
         // Two-sided: a stop the feed dropped has gone, and so has a listed one once nothing vouches for it.
         #expect(Merge.hasGone(passed, frame: f, now: soonAfter))
-        #expect(Merge.hasGone(listed, frame: f, now: ts.addingTimeInterval(GhostCutoffs.predictionsStaleAfter + 11)))
+        #expect(Merge.hasGone(listed, frame: f, now: ts.addingTimeInterval(f.predictionsStaleAfter + 11)))
         // A single late 60 s publish is not stale.
         #expect(!Merge.hasGone(listed, frame: f, now: ts.addingTimeInterval(120)))
         #expect(Merge.hasGone(listed, frame: nil, now: soonAfter))
@@ -338,6 +338,16 @@ struct MergeTests {
         let scheduled = departure(seq: 9, offset: 900, base: midnight)
         #expect(Merge.hasGone(scheduled, frame: f, now: midnight.addingTimeInterval(901)))
         #expect(!Merge.hasGone(scheduled, frame: f, now: midnight.addingTimeInterval(899)))
+    }
+
+    /// Data Saver and Relaxed poll trip_updates every 2–4 cycles. Judged against a fixed threshold, every
+    /// listed bus between two polls dropped to "Departed" and the stale warning showed most of the time.
+    @Test func predictionsStayCurrentForTheIntervalTheyArePolledAt() {
+        #expect(GhostCutoffs.predictionsStaleAfter(pollInterval: 60) >= 150)
+        #expect(GhostCutoffs.predictionsStaleAfter(pollInterval: 120) > 2 * 120)
+        #expect(GhostCutoffs.predictionsStaleAfter(pollInterval: 240) > 2 * 240)
+        // Two-sided: at a 15 s poll the user's own cutoff still governs.
+        #expect(GhostCutoffs.predictionsStaleAfter(pollInterval: 15) == GhostCutoffs.staleAfter)
     }
 
     /// An *early* bus: two or more stops below the boundary, the feed has pruned the stop but its scheduled

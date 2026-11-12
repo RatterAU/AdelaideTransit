@@ -172,7 +172,7 @@ struct TripDetailSheet: View {
                 ScrollViewReader { proxy in
                     List {
                         if let published = frame?.tripUpdatesTimestamp,
-                           context.date.timeIntervalSince(published) > GhostCutoffs.predictionsStaleAfter {
+                           frame?.predictionsAreStale(at: context.date) == true {
                             StaleTimesLabel(age: context.date.timeIntervalSince(published))
                         }
                         ForEach(stops) { dep in

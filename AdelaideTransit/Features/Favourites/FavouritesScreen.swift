@@ -112,7 +112,7 @@ struct FavouritesScreen: View {
     @ViewBuilder
     private func staleBadge(now: Date) -> some View {
         if let published = lastFrame?.tripUpdatesTimestamp,
-           now.timeIntervalSince(published) > GhostCutoffs.predictionsStaleAfter {
+           lastFrame?.predictionsAreStale(at: now) == true {
             DataAgeBadge(timestamp: published).padding()
         }
     }

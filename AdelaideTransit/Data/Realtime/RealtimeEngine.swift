@@ -33,6 +33,14 @@ enum PollSchedule {
         return -delay < min(span, maxChase) ? missRetry : span
     }
 
+    /// Whether the gap to the next header seen will be the real cadence. Only after a miss followed by a quick
+    /// retry: that pins the publish to a few seconds. A miss followed by a full wait — the chase giving up —
+    /// leaves a hole publishes can pass through unseen, and learning across it locked a 60 s feed at 120 s
+    /// after one publish ran 30 s late, every other frame skipped for the rest of the session.
+    static func pinsNextGap(gotNewData: Bool, failures: Int, delay: TimeInterval) -> Bool {
+        !gotNewData && failures == 0 && delay <= missRetry
+    }
+
     /// The publish time to schedule from: a header claiming to be from the future is treated as now.
     static func anchor(published: Date, now: Date) -> Date { min(published, now) }
 
@@ -337,16 +345,19 @@ actor RealtimeEngine {
             let gotNewData = await poll(feed)
             // Torn down mid-fetch by a restart: the replacement loop owns this feed's schedule now.
             guard !Task.isCancelled else { return }
-            if !gotNewData && (failures[feed] ?? 0) == 0 { chasing.insert(feed) } else { chasing.remove(feed) }
             let backoff = Self.backoff(failures: failures[feed] ?? 0)
+            let delay = max(nextDelay(for: feed, multiplier: multiplier, gotNewData: gotNewData), backoff)
+            if PollSchedule.pinsNextGap(gotNewData: gotNewData, failures: failures[feed] ?? 0, delay: delay) {
+                chasing.insert(feed)
+            } else {
+                chasing.remove(feed)
+            }
             // Only the backoff survives a restart. Carrying the normal cadence too pinned a feed to the
             // *previous* screen's rate: warming trip_updates at 4 cycles on the map, then opening a stop,
             // left the sheet on minute-old predictions for up to another minute. `lastHeaderDate` above
             // already covers "nothing new published yet" at the new rate.
             nextAttempt[feed] = backoff > 0 ? Date().addingTimeInterval(backoff) : nil
-            try? await Task.sleep(for: .seconds(max(
-                nextDelay(for: feed, multiplier: multiplier, gotNewData: gotNewData), backoff
-            )))
+            try? await Task.sleep(for: .seconds(delay))
         }
     }
 
@@ -599,6 +610,10 @@ actor RealtimeEngine {
         let frame = RealtimeFrame(
             vehicles: vehicles, predictions: predictions, cancelledTripIDs: cancelledTripIDs,
             alerts: alerts, headerTimestamp: feedTimestamp, tripUpdatesTimestamp: tripUpdatesTimestamp,
+            predictionsStaleAfter: GhostCutoffs.predictionsStaleAfter(
+                pollInterval: (learnedCycle[.tripUpdates] ?? Self.defaultPublishCycle)
+                    * (cycleMultiplier(for: .tripUpdates) ?? 1)
+            ),
             hasTripUpdates: hasTripUpdates
         )
         lastFrame = frame

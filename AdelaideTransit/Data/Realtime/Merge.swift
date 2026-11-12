@@ -66,6 +66,15 @@ struct RealtimeFrame: Sendable {
     /// different screens: taken off the newest header, predictions minutes old read as seconds old whenever
     /// the small vehicles payload kept arriving and the large trip_updates one did not.
     var tripUpdatesTimestamp: Date? = nil
+    /// Age past which `predictions` no longer vouch for anything — set by the engine from the interval it is
+    /// actually polling trip_updates at. See `GhostCutoffs.predictionsStaleAfter`.
+    var predictionsStaleAfter: TimeInterval = GhostCutoffs.predictionsStaleAfter(pollInterval: 60)
+
+    /// Whether the predictions in this frame have stopped being current by `now`.
+    func predictionsAreStale(at now: Date) -> Bool {
+        guard let tripUpdatesTimestamp else { return false }
+        return now.timeIntervalSince(tripUpdatesTimestamp) > predictionsStaleAfter
+    }
     /// Whether trip_updates has ever landed. Absence of a prediction means "running to timetable" only
     /// once this is true; before it, we simply haven't asked yet.
     var hasTripUpdates: Bool = false
@@ -77,11 +86,15 @@ enum GhostCutoffs {
         let v = UserDefaults.standard.double(forKey: "staleCutoffSeconds")
         return v > 0 ? v : 90
     }
-    /// When predictions stop counting as current. Not `staleAfter`: that is tuned to vehicle positions,
-    /// which publish every 15 s, and trip_updates publishes every ~60 s and is readable up to 8.5 s later
-    /// (2026-11-12). At the default 90 s one late publish flashed "Live times last updated" and dropped every
-    /// "Due" row back to "Departed". Two missed publishes, or the user's cutoff if that is longer.
-    static var predictionsStaleAfter: TimeInterval { max(staleAfter, 150) }
+    /// When predictions stop counting as current, given how often they are being fetched. Not `staleAfter`:
+    /// that is tuned to vehicle positions, which publish every 15 s, while trip_updates publishes every ~60 s
+    /// and is readable up to 8.5 s later (2026-11-12). At 90 s one late publish flashed "Live times last
+    /// updated" and dropped every "Due" row back to "Departed" — and under Data Saver or Relaxed, which
+    /// poll every 2–4 cycles, every row did so between polls. Two missed polls plus lag, or the user's
+    /// cutoff if that is longer.
+    static func predictionsStaleAfter(pollInterval: TimeInterval) -> TimeInterval {
+        max(staleAfter, 2 * pollInterval + 30)
+    }
     /// How far ahead of its scheduled start an untracked trip is still worth drawing as a ghost. Fixed at
     /// 5 min: it was a Settings slider, but it is an internal threshold about feed behaviour that nobody
     /// can tune without knowing what the feed does, and the "Show ghosts on map" toggle is the control
@@ -225,8 +238,8 @@ enum Merge {
     /// the stale cutoff nothing is vouching for the row and the clock decides again.
     static func hasGone(_ dep: Departure, frame: RealtimeFrame?, now: Date) -> Bool {
         guard dep.displayTime < now else { return false }
-        guard dep.isStillListed, let published = frame?.tripUpdatesTimestamp else { return true }
-        return now.timeIntervalSince(published) > GhostCutoffs.predictionsStaleAfter
+        guard dep.isStillListed, let frame, frame.tripUpdatesTimestamp != nil else { return true }
+        return frame.predictionsAreStale(at: now)
     }
 
     /// The update that actually belongs to this stop.

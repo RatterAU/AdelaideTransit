@@ -189,6 +189,36 @@ struct PollScheduleTests {
         #expect(PollSchedule.anchor(published: past, now: now) == past)
     }
 
+    /// The engine's loop replayed against a 60 s publisher whose second publish lands 30 s late. The chase
+    /// gives up after 15 s, the next poll skips a publish, and that 120 s gap was learned as the cadence.
+    @Test func oneLatePublishDoesNotLockTheCadenceAtDouble() {
+        func visible(at t: TimeInterval) -> TimeInterval {
+            Array(stride(from: 0.0, through: t, by: 60)).last { $0 + ($0 == 60 ? 30 : 5) <= t } ?? 0
+        }
+        var clock: TimeInterval = 5, last: TimeInterval?, cycle: TimeInterval = 60, chased = false
+        var frames = 0
+        while clock < 1200 {
+            let header = visible(at: clock)
+            let got = header != last
+            if got {
+                if let last {
+                    cycle = PollSchedule.learnedCycle(
+                        previous: cycle, lastHeader: now + last, newHeader: now + header, multiplier: 1, chased: chased
+                    )
+                }
+                last = header
+                frames += 1
+            }
+            let delay = PollSchedule.nextDelay(
+                lastHeader: now + (last ?? 0), cycle: cycle, multiplier: 1, gotNewData: got, now: now + clock
+            )
+            chased = PollSchedule.pinsNextGap(gotNewData: got, failures: 0, delay: delay)
+            clock += delay
+        }
+        #expect(cycle == 60)
+        #expect(frames >= 18) // ~20 publishes in the window; skipping every other one gives ~10
+    }
+
     @Test func keepsPreviousValueWithNoHistory() {
         let learned = PollSchedule.learnedCycle(
             previous: 15, lastHeader: nil, newHeader: now, multiplier: 1, chased: true

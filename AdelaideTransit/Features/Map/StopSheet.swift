@@ -72,7 +72,7 @@ struct StopSheet: View {
             // The map's age badge sits under this sheet and reports the vehicles feed. Predictions that have
             // stopped arriving still read "LIVE", and nothing else here says how old they are.
             if let published = frame?.tripUpdatesTimestamp,
-               now.timeIntervalSince(published) > GhostCutoffs.predictionsStaleAfter {
+               frame?.predictionsAreStale(at: now) == true {
                 StaleTimesLabel(age: now.timeIntervalSince(published))
             }
             if !past.isEmpty {
