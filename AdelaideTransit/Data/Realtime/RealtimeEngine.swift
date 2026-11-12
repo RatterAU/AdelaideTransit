@@ -541,16 +541,20 @@ actor RealtimeEngine {
         if let held {
             var probe = URLRequest(url: url)
             probe.setValue("bytes=0-\(Self.probeBytes - 1)", forHTTPHeaderField: "Range")
-            if let (data, response) = try? await Self.session.data(for: probe),
-               let http = response as? HTTPURLResponse {
-                if http.statusCode == 206, let published = Self.headerTimestamp(prefix: data), published == held {
-                    failures[feed] = 0
-                    return nil
-                }
-                if http.statusCode == 200 { return decode(data, http, feed: feed) }
+            guard let (data, response) = try? await Self.session.data(for: probe),
+                  let http = response as? HTTPURLResponse else {
+                // Unreachable for the probe is unreachable for the body: one request per poll in an outage,
+                // not two. Not counted when a restart cancelled it — see below.
+                if !Task.isCancelled { failures[feed, default: 0] += 1 }
+                return nil
             }
+            if http.statusCode == 206, let published = Self.headerTimestamp(prefix: data), published == held {
+                failures[feed] = 0
+                return nil
+            }
+            if http.statusCode == 200 { return decode(data, http, feed: feed) }
             guard !Task.isCancelled else { return nil }
-            // Anything else — new header, unparseable prefix, a failed probe — falls through to the full GET.
+            // A new header, an unparseable prefix or an error status falls through to the full GET.
         }
         var request = URLRequest(url: url)
         if let etag = etags[feed] { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }
