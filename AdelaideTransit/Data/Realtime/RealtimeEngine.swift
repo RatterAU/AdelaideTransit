@@ -118,6 +118,8 @@ actor RealtimeEngine {
     /// The feed's own publish time — what "data Ns old" must report. Local `Date()` would always read ~0s
     /// and hide exactly the staleness the badge exists to surface.
     private var feedTimestamp: Date?
+    /// Publish time of the trip_updates message `predictions` holds. See `RealtimeFrame.tripUpdatesTimestamp`.
+    private var tripUpdatesTimestamp: Date?
 
     private enum Feed: CaseIterable { case vehicles, tripUpdates, alerts }
 
@@ -404,9 +406,11 @@ actor RealtimeEngine {
         guard let message = await fetch(Endpoint.tripUpdates, feed: .tripUpdates) else { return false }
         guard message.header.timestamp != lastTripUpdatesHeaderTimestamp else { return false }
         lastTripUpdatesHeaderTimestamp = message.header.timestamp
-        if let published = Self.publishDate(of: message) {
+        let published = Self.publishDate(of: message)
+        if let published {
             noteHeader(published, for: .tripUpdates, multiplier: cycleMultiplier(for: .tripUpdates) ?? 1)
         }
+        tripUpdatesTimestamp = published
 
         var updated: [String: [UInt32: Prediction]] = [:]
         var cancelled: Set<String> = []
@@ -533,7 +537,8 @@ actor RealtimeEngine {
     private func emitFrame() {
         let frame = RealtimeFrame(
             vehicles: vehicles, predictions: predictions, cancelledTripIDs: cancelledTripIDs,
-            alerts: alerts, headerTimestamp: feedTimestamp, hasTripUpdates: hasTripUpdates
+            alerts: alerts, headerTimestamp: feedTimestamp, tripUpdatesTimestamp: tripUpdatesTimestamp,
+            hasTripUpdates: hasTripUpdates
         )
         lastFrame = frame
         for continuation in subscribers.values { continuation.yield(frame) }

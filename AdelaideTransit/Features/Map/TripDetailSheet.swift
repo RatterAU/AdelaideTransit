@@ -166,8 +166,15 @@ struct TripDetailSheet: View {
                 let stops = upcomingStops(in: merged, origin: yourSeq)
                 let nextSeq = stops.first?.stopSequence
                 let contStops = continuationStops
+                // On a tick as well as on frames, like the stop sheet: frames stop when the network does, and
+                // the countdowns froze with them.
+                TimelineView(.periodic(from: .now, by: 15)) { context in
                 ScrollViewReader { proxy in
                     List {
+                        if let published = frame?.tripUpdatesTimestamp,
+                           context.date.timeIntervalSince(published) > GhostCutoffs.staleAfter {
+                            StaleTimesLabel(age: context.date.timeIntervalSince(published))
+                        }
                         ForEach(stops) { dep in
                             Button {
                                 if let stop = routeStops.first(where: { $0.id == dep.stopID }) {
@@ -177,7 +184,8 @@ struct TripDetailSheet: View {
                                 stopRow(
                                     dep,
                                     isNext: dep.stopSequence == nextSeq,
-                                    isYours: dep.stopSequence == yourSeq
+                                    isYours: dep.stopSequence == yourSeq,
+                                    now: context.date
                                 )
                             }
                             .buttonStyle(.plain)
@@ -190,7 +198,7 @@ struct TripDetailSheet: View {
                         if let continuation, !contStops.isEmpty {
                             Section {
                                 ForEach(contStops) { dep in
-                                    stopRow(dep, isNext: false, isYours: false)
+                                    stopRow(dep, isNext: false, isYours: false, now: context.date)
                                 }
                             } header: {
                                 VStack(alignment: .leading, spacing: 2) {
@@ -224,6 +232,7 @@ struct TripDetailSheet: View {
                         guard let seq else { return }
                         proxy.scrollTo(seq, anchor: .center)
                     }
+                }
                 }
             }
         }
@@ -436,7 +445,7 @@ struct TripDetailSheet: View {
         .padding(.top, 8)
     }
 
-    private func stopRow(_ dep: Departure, isNext: Bool, isYours: Bool) -> some View {
+    private func stopRow(_ dep: Departure, isNext: Bool, isYours: Bool, now: Date) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
@@ -483,7 +492,7 @@ struct TripDetailSheet: View {
             // Clock time answers "which service is this"; the countdown answers "do I need to move".
             // Showing one without the other always left half the question open.
             VStack(alignment: .trailing, spacing: 1) {
-                Text(countdownText(to: dep.displayTime))
+                Text(countdownText(for: dep, now: now))
                     .monospacedDigit()
                     .fontWeight(isYours ? .bold : .regular)
                     .foregroundStyle(isYours ? Color.accentColor : .primary)

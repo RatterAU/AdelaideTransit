@@ -62,6 +62,24 @@ func countdownText(to date: Date, now: Date = .now) -> String {
     return remainder == 0 ? "\(hours) hr" : "\(hours) hr \(remainder) min"
 }
 
+/// "Due" once a stop the feed still lists is past its predicted time: the bus has not been there yet, so
+/// neither "now" nor "1 min ago" is something the feed has said. See `Merge.hasGone`.
+func countdownText(for departure: Departure, now: Date) -> String {
+    departure.isStillListed && departure.displayTime < now
+        ? "Due" : countdownText(to: departure.displayTime, now: now)
+}
+
+/// Shown where predictions are on screen and have stopped arriving: they still read "LIVE" otherwise.
+struct StaleTimesLabel: View {
+    let age: TimeInterval
+
+    var body: some View {
+        Label("Live times last updated \(pingAgeText(age))", systemImage: "exclamationmark.triangle.fill")
+            .font(.caption)
+            .foregroundStyle(Theme.stale)
+    }
+}
+
 /// Starred routes are a flat list of route IDs in UserDefaults, not a table: there is no relational
 /// question to ask of them, only "is this one starred", and every view that needs the answer already has
 /// `@AppStorage`.

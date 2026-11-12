@@ -29,9 +29,13 @@ struct StopSheet: View {
         let merged = Dictionary(grouping: departures, by: \.tripID)
             .flatMap { tripID, rows in Merge.mergeDepartures(rows, tripID: tripID, frame: frame) }
             .sorted { $0.displayTime < $1.displayTime }
-        // Already sorted by time, so the first future departure is the split point.
-        let boundary = merged.firstIndex { $0.displayTime >= now } ?? merged.endIndex
-        return (Array(merged[boundary...]), Array(merged[..<boundary]))
+        // Not a split at the first future time: a stop the feed still lists stays upcoming past its predicted
+        // time, so the two halves interleave.
+        var upcoming: [Departure] = [], past: [Departure] = []
+        for dep in merged {
+            if Merge.hasGone(dep, frame: frame, now: now) { past.append(dep) } else { upcoming.append(dep) }
+        }
+        return (upcoming, past)
     }
 
     var body: some View {
@@ -61,6 +65,12 @@ struct StopSheet: View {
     private func departureList(now: Date) -> some View {
         let (upcoming, past) = split(now: now)
         return List {
+            // The map's age badge sits under this sheet and reports the vehicles feed. Predictions that have
+            // stopped arriving still read "LIVE", and nothing else here says how old they are.
+            if let published = frame?.tripUpdatesTimestamp,
+               now.timeIntervalSince(published) > GhostCutoffs.staleAfter {
+                StaleTimesLabel(age: now.timeIntervalSince(published))
+            }
             if !past.isEmpty {
                 Button {
                     withAnimation(.snappy) { showPast.toggle() }
@@ -347,7 +357,7 @@ struct DepartureRow: View {
 
             VStack(alignment: .trailing, spacing: 1) {
                 // Past: how long ago it left, over the actual clock time it left at. Future: countdown over time.
-                Text(isPast ? agoText : countdownText(to: departure.displayTime, now: now))
+                Text(isPast ? agoText : countdownText(for: departure, now: now))
                     .monospacedDigit()
                     .contentTransition(.numericText())
                 Text(clockText)

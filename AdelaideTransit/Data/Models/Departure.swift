@@ -28,6 +28,9 @@ struct Departure: Identifiable, Equatable {
     let scheduledTime: Date
     let liveTime: Date?
     let state: TrackingState
+    /// The feed still publishes an update for this stop: the bus has not served it yet, whatever the clock
+    /// says about the predicted time. See `Merge.hasGone`.
+    var isStillListed = false
 
     var delta: TimeInterval? {
         guard let liveTime else { return nil }

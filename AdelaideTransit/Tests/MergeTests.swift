@@ -21,11 +21,13 @@ struct MergeTests {
         cancelled: Set<String> = [],
         vehicles: [String: LiveVehicle] = [:],
         hasTripUpdates: Bool = true,
-        timestamp: Date? = nil
+        timestamp: Date? = nil,
+        headerTimestamp: Date? = nil
     ) -> RealtimeFrame {
         RealtimeFrame(
             vehicles: vehicles, predictions: predictions, cancelledTripIDs: cancelled,
-            alerts: [], headerTimestamp: timestamp, hasTripUpdates: hasTripUpdates
+            alerts: [], headerTimestamp: headerTimestamp ?? timestamp, tripUpdatesTimestamp: timestamp,
+            hasTripUpdates: hasTripUpdates
         )
     }
 
@@ -240,20 +242,86 @@ struct MergeTests {
         #expect(merged[0].displayTime == ts) // capped at publish time: never a future countdown for a bus already gone
     }
 
-    /// The guard on the boundary, now only one stop wide. The stop directly below the boundary with a future
-    /// scheduled time must not be hidden as departed — a boundary that briefly jumps backward (measured:
-    /// ~0.25% of trips) would otherwise erase a genuinely upcoming departure from the list.
-    @Test func stopDirectlyBelowBoundaryButStillFutureIsNotHiddenAsDeparted() {
+    /// An early bus, one stop past you. "Departed" used to wait for the scheduled time to come, to ride out a
+    /// boundary that jumps ahead and back — so the row fell back to the timetable and counted down to a bus
+    /// that had gone. Measured 2026-11-12: 8% of dropped stops were ahead of schedule, against 0.4% of
+    /// cycles where the boundary came back.
+    @Test func anEarlyBusJustPastTheStopReadsDepartedNotScheduled() {
         let ts = midnight.addingTimeInterval(100)
         let rows = [departure(seq: 5, offset: 300, base: midnight)] // scheduled +300, after ts
+        let prediction = Prediction(
+            arrival: midnight.addingTimeInterval(360), departure: nil, delay: nil, scheduleRelationship: .scheduled
+        )
+        let merged = Merge.mergeDepartures(
+            rows, tripID: "T1", frame: frame(predictions: ["T1": [6: prediction]], timestamp: ts)
+        )
+        #expect(merged[0].state == .live)
+        #expect(merged[0].displayTime == ts) // gone as of the publish, not due at +300
+        // Two-sided: a stop the feed still lists keeps its own time.
+        let ahead = Merge.mergeDepartures(
+            [departure(seq: 6, offset: 300, base: midnight)], tripID: "T1",
+            frame: frame(predictions: ["T1": [6: prediction]], timestamp: ts)
+        )
+        #expect(ahead[0].displayTime == midnight.addingTimeInterval(360))
+    }
+
+    /// Published sequences run one *below* the timetable's where they differ (292 of 292 shifted updates,
+    /// 2026-11-12). A stop sheet holds one row: once its stop is passed, the next stop's update sits under
+    /// this row's own number, so "below the smallest published sequence" was false and the row read
+    /// "Scheduled" for a bus already gone.
+    @Test func aPassedStopOnAShiftedTripReadsDeparted() {
+        let ts = midnight.addingTimeInterval(100)
+        let shifted: [UInt32: Prediction] = [
+            5: Prediction(stopID: "S6", arrival: midnight.addingTimeInterval(400), departure: nil, delay: nil, scheduleRelationship: .scheduled),
+            6: Prediction(stopID: "S7", arrival: midnight.addingTimeInterval(460), departure: nil, delay: nil, scheduleRelationship: .scheduled)
+        ]
+        let f = frame(predictions: ["T1": shifted], timestamp: ts)
+        let passed = Merge.mergeDepartures([departure(seq: 5, offset: 300, base: midnight)], tripID: "T1", frame: f)
+        #expect(passed[0].state == .live)
+        #expect(passed[0].displayTime <= ts)
+        // Two-sided: the stop that update is really about is still coming.
+        let next = Merge.mergeDepartures([departure(seq: 6, offset: 360, base: midnight)], tripID: "T1", frame: f)
+        #expect(next[0].displayTime == midnight.addingTimeInterval(400))
+    }
+
+    /// Vehicle positions publish every 15 s and trip updates every 60 s, so the newest header is not the age
+    /// of the predictions. "Departed, as of the publish" has to mean the publish that dropped the stop.
+    @Test func passedStopsAreTimedOffTheTripUpdatesPublishNotTheNewestHeader() {
+        let tripUpdates = midnight.addingTimeInterval(1000)
+        let rows = [departure(seq: 5, offset: 300, base: midnight)]
         let merged = Merge.mergeDepartures(
             rows, tripID: "T1",
             frame: frame(
-                predictions: ["T1": [6: Prediction(arrival: midnight.addingTimeInterval(360), departure: nil, delay: nil, scheduleRelationship: .scheduled)]],
-                timestamp: ts
+                predictions: ["T1": [6: Prediction(arrival: midnight.addingTimeInterval(1060), departure: nil, delay: nil, scheduleRelationship: .scheduled)]],
+                timestamp: tripUpdates, headerTimestamp: tripUpdates.addingTimeInterval(45)
             )
         )
-        #expect(merged[0].displayTime > ts) // stays upcoming, not marked departed
+        #expect(merged[0].displayTime == tripUpdates)
+    }
+
+    /// A stop the feed still lists has not been served, whatever the clock says about its predicted time.
+    /// Filed under "earlier departures" the moment that time passed, a bus held up one stop short read
+    /// "Departed": 44 of 529 stops due within 30 s were still listed a whole cycle later (2026-11-12).
+    @Test func aStopTheFeedStillListsHasNotGoneUntilThePredictionsGoStale() {
+        let ts = midnight.addingTimeInterval(1000)
+        let f = frame(
+            predictions: ["T1": [5: Prediction(arrival: ts.addingTimeInterval(10), departure: nil, delay: nil, scheduleRelationship: .scheduled)]],
+            timestamp: ts
+        )
+        let listed = Merge.mergeDepartures([departure(seq: 5, offset: 900, base: midnight)], tripID: "T1", frame: f)[0]
+        let passed = Merge.mergeDepartures([departure(seq: 4, offset: 840, base: midnight)], tripID: "T1", frame: f)[0]
+
+        let soonAfter = ts.addingTimeInterval(40) // 30 s past the predicted arrival
+        #expect(!Merge.hasGone(listed, frame: f, now: ts))
+        #expect(!Merge.hasGone(listed, frame: f, now: soonAfter))
+        // Two-sided: a stop the feed dropped has gone, and so has a listed one once nothing vouches for it.
+        #expect(Merge.hasGone(passed, frame: f, now: soonAfter))
+        #expect(Merge.hasGone(listed, frame: f, now: ts.addingTimeInterval(GhostCutoffs.staleAfter + 11)))
+        #expect(Merge.hasGone(listed, frame: nil, now: soonAfter))
+        // A timetable row has only the clock.
+        let scheduled = departure(seq: 9, offset: 900, base: midnight)
+        #expect(Merge.hasGone(scheduled, frame: f, now: midnight.addingTimeInterval(901)))
+        #expect(!Merge.hasGone(scheduled, frame: f, now: midnight.addingTimeInterval(899)))
     }
 
     /// An *early* bus: two or more stops below the boundary, the feed has pruned the stop but its scheduled

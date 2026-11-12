@@ -104,7 +104,7 @@ struct FavouritesScreen: View {
     /// this screen had nothing else to say so; the badge has no business here while everything is working.
     @ViewBuilder
     private func staleBadge(now: Date) -> some View {
-        if let published = lastFrame?.headerTimestamp,
+        if let published = lastFrame?.tripUpdatesTimestamp,
            now.timeIntervalSince(published) > GhostCutoffs.staleAfter {
             DataAgeBadge(timestamp: published).padding()
         }
@@ -125,11 +125,11 @@ struct FavouritesScreen: View {
         // Drop what has already gone. The rows are fetched once and merged against every frame, so without
         // this a favourite kept showing the three buses it was showing five minutes ago — and `minutesText`
         // clamps a negative countdown to "now", so they read as three buses about to leave.
-        // No grace period: `StopSheet.split` boundaries on `now` exactly, and a minute of slack here meant the
-        // preview's first row was a bus the stop's own list filed under "earlier departures".
+        // The same test `StopSheet.split` applies, so the preview's first row is never a bus the stop's own
+        // list files under "earlier departures".
         return Dictionary(grouping: filtered, by: \.tripID)
             .flatMap { tripID, group in Merge.mergeDepartures(group, tripID: tripID, frame: lastFrame) }
-            .filter { $0.displayTime >= now }
+            .filter { !Merge.hasGone($0, frame: lastFrame, now: now) }
             .sorted { $0.displayTime < $1.displayTime }
     }
 

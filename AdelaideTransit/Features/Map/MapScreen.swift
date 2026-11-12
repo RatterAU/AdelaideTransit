@@ -614,7 +614,7 @@ struct DataAgeBadge: View {
         // where the old autoconnected publisher ticked forever in the background.
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let age = Int(max(0, context.date.timeIntervalSince(timestamp)))
-            Label("\(age)s old", systemImage: age > 60 ? "exclamationmark.triangle.fill" : "dot.radiowaves.left.and.right")
+            Label(age < 90 ? "\(age)s old" : "\(age / 60) min old", systemImage: age > 60 ? "exclamationmark.triangle.fill" : "dot.radiowaves.left.and.right")
                 .font(.caption2)
                 .monospacedDigit()
                 .foregroundStyle(age > 60 ? Theme.stale : .secondary)

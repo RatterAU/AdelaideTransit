@@ -43,7 +43,13 @@ struct RealtimeFrame: Sendable {
     let predictions: [String: [UInt32: Prediction]]        // tripID -> stopSequence -> Prediction
     let cancelledTripIDs: Set<String>
     let alerts: [ServiceAlert]
+    /// Publish time of the newest vehicles or trip_updates message — what the map's age badge reports.
     let headerTimestamp: Date?
+    /// Publish time of the trip_updates message `predictions` came from. Its own field because the two feeds
+    /// run on different clocks (vehicles 15 s, trip_updates 60 s, measured 2026-11-12) and are polled under
+    /// different screens: taken off the newest header, predictions minutes old read as seconds old whenever
+    /// the small vehicles payload kept arriving and the large trip_updates one did not.
+    var tripUpdatesTimestamp: Date? = nil
     /// Whether trip_updates has ever landed. Absence of a prediction means "running to timetable" only
     /// once this is true; before it, we simply haven't asked yet.
     var hasTripUpdates: Bool = false
@@ -87,17 +93,24 @@ enum Merge {
         // Taken from the *matched* rows where possible — a static sequence, correct even on the trips whose
         // published sequences are shifted. Only when nothing matched (a stop sheet passes one stop's row, and
         // an already-passed stop matches nothing) does it fall back to the published numbering.
-        //
+        let matchedBoundary = departures.compactMap {
+            prediction(for: $0, in: tripPredictions) != nil ? $0.stopSequence : nil
+        }.min()
         // Sequence 999 marks the trip's final stop, not junk — measured, 142/142 of them were the last stop in
         // `stop_times`. So a trip publishing *only* 999 is a bus on its last leg with every other stop behind
-        // it, which is `Int.max`: everything else has been passed. Treating it as "no position" left every
-        // earlier stop counting down to a time the bus was long past.
-        let matchedSequences = departures.compactMap {
-            prediction(for: $0, in: tripPredictions) != nil ? $0.stopSequence : nil
+        // it. Treating it as "no position" left every earlier stop counting down to a time long past.
+        let publishedBoundary = tripPredictions.keys.map(Int.init).filter { $0 < 900 }.min()
+        // Only asked of a row with no update of its own. On the published numbering the test is `<=`: where
+        // the two numberings differ the published one runs a stop *below* the timetable's (292/292 shifted
+        // updates, 2026-11-12), so an unmatched row sitting at the smallest published number is a passed stop
+        // whose number the next stop's update has taken. With `<` it read "Scheduled" for a bus already gone.
+        let isBehindBus = { (sequence: Int) -> Bool in
+            if let matchedBoundary { return sequence < matchedBoundary }
+            if let publishedBoundary { return sequence <= publishedBoundary }
+            return !tripPredictions.isEmpty
         }
-        let passedBoundary: Int? = matchedSequences.min()
-            ?? tripPredictions.keys.map(Int.init).filter { $0 < 900 }.min()
-            ?? (tripPredictions.isEmpty ? nil : Int.max)
+        // "As of when": the publish that dropped the stop, not the newest header in the frame.
+        let publishedAt = frame.tripUpdatesTimestamp
 
         // Every delay we actually know for this trip, by stop sequence: derived from a stop's own absolute
         // predicted time against its schedule, or from a published `delay` field (this feed sends none).
@@ -119,16 +132,22 @@ enum Merge {
         // The boundary stop's own predicted arrival, used to bound the stop just below it. Looked up through
         // the same matcher when the boundary came from a matched row, so it can't pick up a shifted trip's
         // neighbouring stop.
-        let boundaryTime: Date? = passedBoundary.flatMap { boundary in
+        let boundaryTime: Date? = matchedBoundary.flatMap { boundary in
             departures.first { $0.stopSequence == boundary }
                 .flatMap { prediction(for: $0, in: tripPredictions)?.time }
-                ?? tripPredictions[UInt32(clamping: boundary)]?.time
-        }
+        } ?? publishedBoundary.flatMap { tripPredictions[UInt32(clamping: $0)]?.time }
 
         // Worked out once, not per row: a trip sheet merges the whole route on every frame, and answering this
         // per passed stop was an array built and scanned for each, O(stops²) on the longest trips.
-        let rowsBelow = passedBoundary.map { boundary in departures.map(\.stopSequence).filter { $0 < boundary } } ?? []
-        let nearestBelow = rowsBelow.count > 1 ? rowsBelow.max() : nil
+        // "Directly below" is the next stop *in the list we were given*, not `boundary - 1`: static sequences
+        // skip numbers, so `boundary - 1` can be a stop that doesn't exist. A stop sheet passes one stop's
+        // rows and has no neighbours to compare, so there it is sequence adjacency.
+        let rowsBehind = departures.map(\.stopSequence).filter(isBehindBus)
+        let nearestBehind = rowsBehind.count > 1 ? rowsBehind.max() : nil
+        let isDirectlyBehind = { (sequence: Int) -> Bool in
+            if let nearestBehind { return sequence == nearestBehind }
+            return sequence >= (matchedBoundary ?? publishedBoundary ?? .max) - 1
+        }
 
         return departures
             .sorted { $0.stopSequence < $1.stopSequence }
@@ -138,47 +157,27 @@ enum Merge {
                         return restate(dep, .cancelled, liveTime: nil)
                     }
                     if let predictedTime = pred.time {
-                        return restate(dep, .live, liveTime: predictedTime)
+                        return restate(dep, .live, liveTime: predictedTime, isStillListed: true)
                     }
                 }
 
-                // The stop *directly* below the boundary is not reliably passed: the feed drops a stop's update
-                // while the bus is still working toward it, so a bus physically at the stop reads as one stop
-                // on. Marking it departed at its long-gone scheduled time is what made an imminent bus vanish
-                // from the list and reappear at the next stop as "10 min late". Its time here is bounded by the
-                // boundary stop's own published arrival — a hop away, in the future — so show that instead.
-                // ponytail: the next stop's arrival is one hop long, so it's capped at the feed's publish
-                // time — worst case this reads "now" for a bus that just left, never a future countdown for
-                // one already gone. Subtracting the real scheduled gap needs the next stop's scheduled time,
-                // which a stop sheet (one stop's rows) doesn't have; pass the whole trip's stop_times in if
-                // "now" instead of "departed" starts to matter.
+                // A stop behind the bus: the feed dropped its update, so it has departed, no later than that
+                // publish. Showing the timetable there is what made a bus that had moved on still read "due in
+                // 2 min", the list contradicting the GPS dot on the map.
                 //
-                // Gated on the same "its scheduled time has come" condition as the departed branch below, so a
-                // stop the bus genuinely hasn't reached yet still runs to timetable rather than inheriting a
-                // later stop's time.
-                // "Directly below" is the next stop *in the list we were given*, not `boundary - 1`: static
-                // sequences are non-contiguous on 26534 of 26535 trips, so `boundary - 1` is usually a stop
-                // number that doesn't exist and this case never fired at all.
-                if let passedBoundary, dep.stopSequence < passedBoundary,
-                   isDirectlyBelow(dep.stopSequence, boundary: passedBoundary, nearestBelow: nearestBelow),
-                   let ts = frame.headerTimestamp, dep.scheduledTime <= ts,
-                   let nextTime = boundaryTime {
-                    return restate(dep, .live, liveTime: min(nextTime, ts))
-                }
-
-                // A stop below the boundary the bus has already served — the feed dropped its update. It has
-                // departed, no later than the feed's publish time; showing the timetable there is what made a
-                // bus that had moved on still read "due in 2 min", the list contradicting the GPS dot on the
-                // map. Gated on the scheduled time having already come (using the feed timestamp as "now") so a
-                // boundary that briefly jumps backward can't hide a stop the bus genuinely hasn't reached.
+                // Not gated on the scheduled time having come. It was, to ride out a boundary that jumps ahead
+                // and comes back — but that is 5 of 1374 trip-cycles, against 72 of 893 dropped stops that were
+                // simply ahead of schedule (2026-11-12), and each of those fell back to the timetable and
+                // counted down to a bus already gone. A stop that does come back matches again and is restored.
                 //
-                // The scheduled-time gate only applies one stop below the boundary, where a backward jump is
-                // possible. Two or more below, an early bus would otherwise keep counting down at a stop the
-                // boundary (and the route line, which reads the same boundary) already shows as passed.
-                if let passedBoundary, dep.stopSequence < passedBoundary,
-                   let ts = frame.headerTimestamp,
-                   dep.scheduledTime <= ts || !isDirectlyBelow(dep.stopSequence, boundary: passedBoundary, nearestBelow: nearestBelow) {
-                    return restate(dep, .live, liveTime: min(dep.scheduledTime, ts))
+                // When it left is not published. For the stop just behind the bus the boundary stop's arrival
+                // bounds it, capped at the publish — "just now", never a future time. Further back the best
+                // figure is the timetable, capped the same way for a bus running early.
+                if isBehindBus(dep.stopSequence), let publishedAt {
+                    let departed = isDirectlyBehind(dep.stopSequence)
+                        ? min(boundaryTime ?? publishedAt, publishedAt)
+                        : min(dep.scheduledTime, publishedAt)
+                    return restate(dep, .live, liveTime: departed)
                 }
 
                 // Omitted upcoming stop: interpolate its delay between the nearest known delay before and after
@@ -195,6 +194,18 @@ enum Merge {
                 }
                 return restate(dep, .live, liveTime: dep.scheduledTime.addingTimeInterval(delay))
             }
+    }
+
+    /// Whether a row belongs under "earlier departures".
+    ///
+    /// The clock alone is not enough. A stop the feed still lists has not been served: its predicted time
+    /// slipping behind the clock means the bus is due, not gone, and 44 of 529 stops due within 30 s were
+    /// still listed a whole 60 s cycle later (2026-11-12). Held only while the predictions are fresh — after
+    /// the stale cutoff nothing is vouching for the row and the clock decides again.
+    static func hasGone(_ dep: Departure, frame: RealtimeFrame?, now: Date) -> Bool {
+        guard dep.displayTime < now else { return false }
+        guard dep.isStillListed, let published = frame?.tripUpdatesTimestamp else { return true }
+        return now.timeIntervalSince(published) > GhostCutoffs.staleAfter
     }
 
     /// The update that actually belongs to this stop.
@@ -227,18 +238,6 @@ enum Merge {
     /// exactly one (measured 2026-10-31).
     private static let maxPublishedShift = 1
 
-    /// Whether this stop is the one immediately before the boundary among the stops we were handed. Static
-    /// sequences skip numbers on effectively every trip, so `boundary - 1` is not "the previous stop".
-    /// With a single stop's rows (a stop sheet) there is no previous stop in the list, and the caller's
-    /// `< boundary` test has already established it is behind the bus.
-    private static func isDirectlyBelow(_ sequence: Int, boundary: Int, nearestBelow: Int?) -> Bool {
-        if let nearestBelow { return sequence == nearestBelow }
-        // A stop sheet passes one stop's rows, so there are no neighbours to compare against: fall back to
-        // sequence adjacency, which errs toward "departed" for a stop several numbers back — the reading that
-        // matches the route line rather than contradicting it.
-        return sequence >= boundary - 1
-    }
-
     /// How many stops the bus still has to serve before this one — 0 once it is the stop being worked toward.
     ///
     /// Counted over the updates the feed still publishes, not subtracted from sequence numbers: static
@@ -270,11 +269,14 @@ enum Merge {
         return matched.min() ?? preds.keys.map(Int.init).filter { $0 < 900 }.min()
     }
 
-    private static func restate(_ dep: Departure, _ state: TrackingState, liveTime: Date?) -> Departure {
+    private static func restate(
+        _ dep: Departure, _ state: TrackingState, liveTime: Date?, isStillListed: Bool = false
+    ) -> Departure {
         Departure(
             tripID: dep.tripID, stopSequence: dep.stopSequence, stopID: dep.stopID, routeID: dep.routeID,
             routeShortName: dep.routeShortName, routeColor: dep.routeColor, headsign: dep.headsign,
-            direction: dep.direction, scheduledTime: dep.scheduledTime, liveTime: liveTime, state: state
+            direction: dep.direction, scheduledTime: dep.scheduledTime, liveTime: liveTime, state: state,
+            isStillListed: isStillListed
         )
     }
 
